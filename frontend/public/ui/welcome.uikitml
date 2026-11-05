@@ -1,0 +1,88 @@
+<!--
+  HandDeck Welcome & Control Panel (UIKitML)
+-->
+<style>
+  .panel-root {
+    flex-direction: column;
+    width: 440px;
+  }
+
+  .panel-content {
+    flex-direction: column;
+    gap: 8px;
+    padding: 24px;
+  }
+
+  .eyebrow {
+    color: #38bdf8;
+    font-size: 13px;
+    font-weight: 700;
+    letter-spacing: 1.5px;
+  }
+
+  .eyebrow:dark {
+    color: #38bdf8;
+  }
+
+  .heading {
+    color: #fafaf9;
+    font-size: 28px;
+    font-weight: 700;
+    line-height: 34px;
+  }
+
+  .heading:dark {
+    color: #fafaf9;
+  }
+
+  .body {
+    color: #94a3b8;
+    font-size: 17px;
+    line-height: 24px;
+  }
+
+  .body:dark {
+    color: #cbd5e1;
+  }
+
+  .button-group {
+    flex-direction: column;
+    gap: 10px;
+    padding-left: 24px;
+    padding-right: 24px;
+    padding-bottom: 24px;
+  }
+
+  .button {
+    justify-content: flex-start;
+  }
+
+  .button-label {
+    transform-translate-y: 1px;
+  }
+</style>
+<Panel class="panel-root">
+  <div class="panel-content">
+    <div class="eyebrow">VR START COMPETITION 2026 | MILESTONE 1</div>
+    <div class="heading">HandDeck: Study Buddy</div>
+    <div class="body">5 floating flashcards in a seated arc (within 60 cm reach).</div>
+    <div class="body">Pinch to grab and move cards in space!</div>
+  </div>
+  <div class="button-group">
+    <Button id="xr-button" class="button">
+      <ButtonIcon>
+        <RectangleGoggles></RectangleGoggles>
+      </ButtonIcon>
+      <ButtonLabel class="button-label">Enter XR (Emulator / Headset)</ButtonLabel>
+    </Button>
+    <Button id="reset-button" class="button">
+      <ButtonLabel class="button-label">Reset Flashcard Positions</ButtonLabel>
+    </Button>
+    <Button id="exit-button" class="button" style="display: none">
+      <ButtonIcon>
+        <LogIn></LogIn>
+      </ButtonIcon>
+      <ButtonLabel class="button-label">Exit to Browser</ButtonLabel>
+    </Button>
+  </div>
+</Panel>

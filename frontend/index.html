@@ -1,0 +1,90 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, shrink-to-fit=no"
+    />
+    <link rel="icon" href="data:," />
+    <title>HandDeck - VR Study Buddy</title>
+    <style>
+      body, html {
+        margin: 0;
+        padding: 0;
+        width: 100%;
+        height: 100%;
+        overflow: hidden;
+        background-color: #0b0d13;
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+      }
+      #scene-container {
+        width: 100%;
+        height: 100%;
+      }
+      #hud-instructions {
+        position: absolute;
+        top: 16px;
+        left: 16px;
+        z-index: 9999;
+        background: rgba(15, 23, 42, 0.88);
+        backdrop-filter: blur(10px);
+        border: 1px solid rgba(56, 189, 248, 0.35);
+        border-radius: 12px;
+        padding: 14px 18px;
+        color: #f8fafc;
+        max-width: 380px;
+        box-shadow: 0 10px 25px rgba(0, 0, 0, 0.5);
+        pointer-events: auto;
+      }
+      #hud-instructions h1 {
+        margin: 0 0 6px 0;
+        font-size: 16px;
+        font-weight: 700;
+        color: #38bdf8;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+      #hud-instructions p {
+        margin: 0 0 8px 0;
+        font-size: 13px;
+        line-height: 1.45;
+        color: #cbd5e1;
+      }
+      #hud-instructions ul {
+        margin: 0;
+        padding-left: 18px;
+        font-size: 12px;
+        line-height: 1.5;
+        color: #94a3b8;
+      }
+      #hud-instructions li strong {
+        color: #f1f5f9;
+      }
+      #hud-instructions .badge {
+        display: inline-block;
+        background: rgba(56, 189, 248, 0.15);
+        color: #38bdf8;
+        font-size: 11px;
+        font-weight: 600;
+        padding: 2px 8px;
+        border-radius: 999px;
+        margin-bottom: 6px;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="hud-instructions">
+      <span class="badge">Meta VR Competition 2026 • Milestone 1</span>
+      <h1>HandDeck: VR Study Buddy</h1>
+      <p>5 interactive flashcards in a seated arc (&lt;60 cm reach).</p>
+      <ul>
+        <li><strong>Desktop Emulator:</strong> Click <em>Enter XR</em> in top bar. Aim mouse ray at a card, <strong>click &amp; hold</strong> to pinch-grab and move.</li>
+        <li><strong>Meta Quest:</strong> Aim hand ray, <strong>pinch index &amp; thumb</strong> to grab and reposition cards in 3D.</li>
+      </ul>
+    </div>
+    <div id="scene-container"></div>
+    <script type="module" src="/src/index.ts"></script>
+  </body>
+</html>

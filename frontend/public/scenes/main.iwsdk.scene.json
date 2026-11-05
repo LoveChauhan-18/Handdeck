@@ -1,0 +1,90 @@
+{
+  "version": "iwsdk.scene.v1",
+  "units": "meters",
+  "components": {
+    "com.iwsdk.components.DomeGradient": {
+      "sky": [0.07, 0.08, 0.12, 1],
+      "equator": [0.11, 0.13, 0.18, 1],
+      "ground": [0.03, 0.04, 0.06, 1],
+      "elevationDeg": 28,
+      "azimuthDeg": -25,
+      "dither": true
+    },
+    "com.iwsdk.components.IBLGradient": {
+      "sky": [0.35, 0.40, 0.55, 1],
+      "equator": [0.25, 0.30, 0.40, 1],
+      "ground": [0.10, 0.12, 0.16, 1],
+      "intensity": 0.45
+    }
+  },
+  "environment": {
+    "toneMapping": "aces",
+    "exposure": 1.25,
+    "shadows": true,
+    "shadowMapType": "pcf"
+  },
+  "resources": {},
+  "nodes": [
+    {
+      "id": "studio-floor",
+      "name": "Studio Floor",
+      "framingRole": "support",
+      "content": {
+        "type": "asset",
+        "asset": "studio-floor",
+        "receiveShadow": true
+      },
+      "components": {
+        "DomeFade": {
+          "start": 4,
+          "end": 9
+        }
+      }
+    },
+    {
+      "id": "welcome-panel",
+      "name": "Welcome Panel",
+      "content": {
+        "type": "asset",
+        "asset": "welcome-panel"
+      },
+      "transform": {
+        "position": [0, 1.55, -0.92],
+        "rotationDeg": [-8, 0, 0],
+        "scale": 0.34
+      },
+      "components": {
+        "RayInteractable": {}
+      }
+    },
+    {
+      "id": "key-light",
+      "name": "Key Light",
+      "transform": {
+        "position": [1.8, 3.8, 1.8],
+        "rotationDeg": [-55, 25, 0]
+      },
+      "components": {
+        "DirectionalLight": {
+          "color": [1, 0.98, 0.95, 1],
+          "intensity": 2.2,
+          "castShadow": true,
+          "shadowMapSize": "1024",
+          "shadowCameraNear": 0.5,
+          "shadowCameraFar": 10
+        }
+      }
+    },
+    {
+      "id": "fill-light",
+      "name": "Fill Light",
+      "components": {
+        "HemisphereLight": {
+          "skyColor": [0.65, 0.75, 0.95, 1],
+          "groundColor": [0.22, 0.24, 0.30, 1],
+          "intensity": 1.2
+        }
+      }
+    }
+  ]
+}
