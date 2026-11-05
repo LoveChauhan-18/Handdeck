@@ -11,6 +11,7 @@
     "reference:status": "iwsdk reference status",
     "reference:warmup": "iwsdk reference warmup",
     "typecheck": "tsc --noEmit",
+    "postinstall": "node scripts/patch-iwsdk-timeout.js",
     "build": "vite build",
     "preview": "vite preview"
   },
