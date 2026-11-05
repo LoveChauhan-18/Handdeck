@@ -76,13 +76,22 @@
   </head>
   <body>
     <div id="hud-instructions">
-      <span class="badge">Meta VR Competition 2026 • Milestone 1</span>
+      <span class="badge">Meta VR Competition 2026 • Milestone 2</span>
       <h1>HandDeck: VR Study Buddy</h1>
-      <p>5 interactive flashcards in a seated arc (&lt;60 cm reach).</p>
+      <div id="hud-counters" style="margin: 8px 0; padding: 6px 12px; background: rgba(0,0,0,0.45); border: 1px solid rgba(255,255,255,0.1); border-radius: 8px; font-size: 13px; font-weight: 500;">
+        Know: <strong style="color: #4ade80;">0</strong> | Revise: <strong style="color: #fb923c;">0</strong>
+      </div>
+      <p style="font-size: 12px; margin-bottom: 6px;">
+        Interactive VR Flashcards with Teacher Area and Know/Revise Zones (&lt;60 cm reach).
+      </p>
       <ul>
-        <li><strong>Desktop Emulator:</strong> Click <em>Enter XR</em> in top bar. Aim mouse ray at a card, <strong>click &amp; hold</strong> to pinch-grab and move.</li>
-        <li><strong>Meta Quest:</strong> Aim hand ray, <strong>pinch index &amp; thumb</strong> to grab and reposition cards in 3D.</li>
+        <li><strong>Teacher Area:</strong> Bring any card in front of the floating AI orb to display its question on the glowing screen.</li>
+        <li><strong>Sorting Zones:</strong> Release card inside <strong>KNOW</strong> (Right / Green) or <strong>REVISE</strong> (Left / Orange) tray to snap and lock it.</li>
+        <li><strong>Controls:</strong> Click &amp; hold to pinch-grab in emulator (or pinch index &amp; thumb in Quest VR).</li>
       </ul>
+      <div style="display: flex; gap: 8px; margin-top: 10px;">
+        <button id="btn-reset" style="background: #0284c7; hover: #0369a1; color: white; border: none; border-radius: 6px; padding: 7px 14px; font-size: 12px; font-weight: 600; cursor: pointer;">↺ Reset Session (R)</button>
+      </div>
     </div>
     <div id="scene-container"></div>
     <script type="module" src="/src/index.ts"></script>

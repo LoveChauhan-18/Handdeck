@@ -49,8 +49,8 @@
         "asset": "welcome-panel"
       },
       "transform": {
-        "position": [0, 1.55, -0.92],
-        "rotationDeg": [-8, 0, 0],
+        "position": [0, 1.68, -0.92],
+        "rotationDeg": [-10, 0, 0],
         "scale": 0.34
       },
       "components": {

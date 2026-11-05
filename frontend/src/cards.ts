@@ -1,6 +1,6 @@
 /**
  * HandDeck - Seated WebXR Flashcards
- * Milestone 1: 5 Interactive Grabbable Flashcards
+ * Milestone 1 + 2: 5 Interactive Grabbable Flashcards with Zone Detection
  */
 
 import {
@@ -27,6 +27,13 @@ import {
   Types,
   World,
 } from '@iwsdk/core';
+import {
+  isInsideKnowZone,
+  isInsideReviseZone,
+  snapCardToZone,
+  updateStudyBuddy,
+  resetStudyBuddy,
+} from './study-buddy.js';
 
 export interface FlashcardData {
   id: number;
@@ -62,7 +69,7 @@ export const DUMMY_CARDS: FlashcardData[] = [
     category: 'ASTRONOMY',
     title: 'Speed of Light',
     question: 'What is the speed of light (c) in vacuum?',
-    answer: '~299,792 km/s (3 × 10⁸ m/s). It is the universal speed limit.',
+    answer: '~299,792 km/s (3 x 10^8 m/s). It is the universal speed limit.',
     accentColor: '#f59e0b', // Amber
     badgeBg: 'rgba(245, 158, 11, 0.15)',
   },
@@ -100,17 +107,35 @@ export const Flashcard = createComponent(
   'Interactive study flashcard'
 );
 
-/** Registry of active card entities and their initial transforms for reset */
-interface CardRecord {
+/**
+ * Runtime record for a flashcard — holds its mesh, materials, initial
+ * transform, card data, and Milestone 2 snap/lock state.
+ */
+export interface CardRecord {
   entity: Entity;
   mesh: Mesh;
   frontMaterial: MeshStandardMaterial;
   baseColor: Color;
   initialPos: Vector3;
   initialRot: Euler;
+  data: FlashcardData;
+  lockedZone: 'know' | 'revise' | null;
+  isSnapping: boolean;
+  hasBeenMoved: boolean;
+  snapTargetPos: Vector3;
+  snapTargetRot: Euler;
+  snapProgress: number;
 }
 
+/** Module-level registry – populated by setupFlashcards() */
 const cardRecords: CardRecord[] = [];
+
+/** Expose records to other modules (study-buddy, panel) */
+export function getCardRecords(): CardRecord[] {
+  return cardRecords;
+}
+
+// ----- Canvas helpers (private) ------------------------------------------------
 
 /** Helper to wrap text cleanly on HTML5 canvas */
 function wrapText(
@@ -199,7 +224,7 @@ function createCardFrontTexture(card: FlashcardData): CanvasTexture {
   ctx.font = 'bold 30px system-ui, sans-serif';
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
-  ctx.fillText(`${card.category} • #${card.id}`, 260, 114);
+  ctx.fillText(`${card.category} - #${card.id}`, 260, 114);
 
   // Card count indicator (top right)
   ctx.fillStyle = 'rgba(255, 255, 255, 0.45)';
@@ -261,7 +286,7 @@ function createCardFrontTexture(card: FlashcardData): CanvasTexture {
   ctx.textAlign = 'center';
   ctx.fillStyle = card.accentColor;
   ctx.font = '600 32px system-ui, sans-serif';
-  ctx.fillText('🤏 Pinch to Grab & Move Card', 512, 1255);
+  ctx.fillText('Pinch to Grab & Move Card', 512, 1255);
 
   const texture = new CanvasTexture(canvas);
   texture.colorSpace = SRGBColorSpace;
@@ -321,7 +346,7 @@ function createCardBackTexture(): CanvasTexture {
 
   ctx.fillStyle = 'rgba(255, 255, 255, 0.45)';
   ctx.font = '400 24px system-ui, sans-serif';
-  ctx.fillText('Meta Quest WebXR • Hands Only', 512, 780);
+  ctx.fillText('Meta Quest WebXR - Hands Only', 512, 780);
 
   const texture = new CanvasTexture(canvas);
   texture.colorSpace = SRGBColorSpace;
@@ -417,13 +442,13 @@ export function setupFlashcards(world: World): void {
     entity.addComponent(RayInteractable);
 
     // Make grabbable via IWSDK GrabSystem
-    // MovementMode.MoveFromTarget moves the object smoothly with the grabbing hand ray/pointer
     entity.addComponent(DistanceGrabbable, {
       movementMode: MovementMode.MoveFromTarget,
       translate: true,
       rotate: true,
     });
 
+    // Push full record including Milestone 2 snap/lock fields
     cardRecords.push({
       entity,
       mesh,
@@ -431,33 +456,48 @@ export function setupFlashcards(world: World): void {
       baseColor: new Color(card.accentColor),
       initialPos: new Vector3(posX, posY, posZ),
       initialRot: new Euler(rotX, rotY, 0),
+      data: card,
+      lockedZone: null,
+      isSnapping: false,
+      hasBeenMoved: false,
+      snapTargetPos: new Vector3(),
+      snapTargetRot: new Euler(),
+      snapProgress: 0,
     });
   });
 }
 
 /** Resets all flashcards back to their default seated arc configuration */
 export function resetFlashcards(): void {
-  cardRecords.forEach((record) => {
-    record.mesh.position.copy(record.initialPos);
-    record.mesh.rotation.copy(record.initialRot);
-    record.mesh.scale.set(1, 1, 1);
-    record.frontMaterial.emissiveIntensity = 0;
-  });
+  resetStudyBuddy(cardRecords);
 }
 
+const tempPos = new Vector3();
+
 /**
- * ECS System managing interactive hover and grab visual feedback for flashcards.
+ * ECS System managing interactive hover/grab visual feedback AND
+ * Milestone 2 zone-detection + snap animation for flashcards.
  */
 export class FlashcardSystem extends createSystem({
   cards: { required: [Flashcard] },
   hoveredCards: { required: [Flashcard, Hovered] },
   grabbedCards: { required: [Flashcard, Grabbed] },
 }) {
-  update(): void {
+  update(delta: number, time: number): void {
+    // ---- 1. Hover / Grab visual feedback -------------------------------------
     cardRecords.forEach((record) => {
       const entity = record.entity;
       const isGrabbed = entity.hasComponent(Grabbed);
       const isHovered = entity.hasComponent(Hovered);
+
+      if (isGrabbed) {
+        record.hasBeenMoved = true;
+      }
+
+      if (record.lockedZone) {
+        // Locked cards keep their placement glow
+        return;
+      }
 
       if (isGrabbed) {
         // Bright grab highlight & slight scale up
@@ -475,5 +515,45 @@ export class FlashcardSystem extends createSystem({
         record.mesh.scale.set(1.0, 1.0, 1.0);
       }
     });
+
+    // ---- 2. Delegate Teacher animations and trigger detection -----------------
+    updateStudyBuddy(delta, time, cardRecords);
+
+    // ---- 3. Zone detection: check released unlocked cards --------------------
+    for (const card of cardRecords) {
+      if (card.lockedZone || card.isSnapping) continue;
+      // Skip while actively held
+      if (card.entity.hasComponent(Grabbed)) continue;
+      // Only snap if card was actually grabbed and moved
+      if (!card.hasBeenMoved) continue;
+
+      card.mesh.getWorldPosition(tempPos);
+      if (isInsideKnowZone(tempPos)) {
+        snapCardToZone(card, 'know');
+      } else if (isInsideReviseZone(tempPos)) {
+        snapCardToZone(card, 'revise');
+      }
+    }
+
+    // ---- 4. Smooth snap animation --------------------------------------------
+    for (const card of cardRecords) {
+      if (!card.isSnapping) continue;
+
+      card.snapProgress = Math.min(1, card.snapProgress + delta * 6); // fast approach ~0.17 s
+      const t = card.snapProgress;
+
+      // Linear interpolation toward snap target
+      card.mesh.position.lerpVectors(card.mesh.position, card.snapTargetPos, t);
+      card.mesh.rotation.x += (card.snapTargetRot.x - card.mesh.rotation.x) * t;
+      card.mesh.rotation.y += (card.snapTargetRot.y - card.mesh.rotation.y) * t;
+      card.mesh.rotation.z += (card.snapTargetRot.z - card.mesh.rotation.z) * t;
+
+      if (card.snapProgress >= 1) {
+        card.isSnapping = false;
+        // Final exact placement
+        card.mesh.position.copy(card.snapTargetPos);
+        card.mesh.rotation.copy(card.snapTargetRot);
+      }
+    }
   }
 }
