@@ -1,0 +1,38 @@
+# render.yaml — Render.com deployment for the HandDeck FastAPI backend.
+# Docs: https://render.com/docs/blueprint-spec
+#
+# How to use:
+#   1. Push this file to the root of your repo (already done).
+#   2. In Render dashboard → New → Blueprint → connect this repo.
+#   3. Render will auto-detect this file and create the service below.
+#   4. Add secret env vars in the Render dashboard (not here):
+#        GEMINI_API_KEY   = your Gemini API key
+#        ALLOWED_ORIGINS  = https://lovechauhan-18.github.io
+
+services:
+  - type: web
+    name: handdeck-api
+    runtime: python
+    region: singapore           # Change to: oregon, ohio, frankfurt, etc.
+    plan: free                  # Upgrade to starter ($7/mo) for no cold-start
+
+    rootDir: backend            # All commands run from the backend/ folder
+
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+
+    # Health check — Render pings this every 30 s
+    healthCheckPath: /health
+
+    # Non-secret env vars (safe to commit)
+    envVars:
+      - key: RATE_LIMIT_PER_MINUTE
+        value: "60"
+      - key: MAX_REQUEST_BYTES
+        value: "1048576"
+      # Secret env vars must be added manually in the Render dashboard.
+      # Listed here as references so Render knows they are required:
+      - key: GEMINI_API_KEY
+        sync: false             # "sync: false" means "user must supply this"
+      - key: ALLOWED_ORIGINS
+        sync: false             # e.g. https://lovechauhan-18.github.io

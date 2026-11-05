@@ -41,5 +41,7 @@ export default defineConfig({
     esbuildOptions: { target: 'esnext' },
   },
   publicDir: 'public',
-  base: './',
+  // Local dev: './' (relative, works with vite dev server)
+  // GitHub Pages CI: '/Handdeck/' (injected via VITE_BASE env var in the workflow)
+  base: process.env.VITE_BASE ?? './',
 });

@@ -33,14 +33,25 @@ GROQ_API_KEY = os.getenv("GROQ_API_KEY", "").strip()
 MAX_REQUEST_BYTES = int(os.getenv("MAX_REQUEST_BYTES", "1048576")) # 1 MB cap
 RATE_LIMIT_PER_MINUTE = int(os.getenv("RATE_LIMIT_PER_MINUTE", "60"))
 
+# CORS allowed origins — read from env so the same image works locally and in prod.
+# Examples:
+#   ALLOWED_ORIGINS=*                                (dev / open)
+#   ALLOWED_ORIGINS=https://lovechauhan-18.github.io (production)
+#   ALLOWED_ORIGINS=https://lovechauhan-18.github.io,http://localhost:5173 (both)
+_raw_origins = os.getenv("ALLOWED_ORIGINS", "*").strip()
+ALLOWED_ORIGINS: list[str] = (
+    ["*"] if _raw_origins == "*"
+    else [o.strip() for o in _raw_origins.split(",") if o.strip()]
+)
+
 # In-memory sliding window rate limiter
 ip_requests: Dict[str, List[float]] = defaultdict(list)
 
 # CORS Middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
+    allow_origins=ALLOWED_ORIGINS,
+    allow_credentials=ALLOWED_ORIGINS != ["*"],  # credentials require explicit origins
     allow_methods=["*"],
     allow_headers=["*"],
 )

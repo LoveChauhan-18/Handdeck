@@ -1,0 +1,29 @@
+# railway.toml — Railway.app deployment for the HandDeck FastAPI backend.
+# Docs: https://docs.railway.app/reference/config-as-code
+#
+# How to use:
+#   1. Push this file to the repo root (already done).
+#   2. In Railway → New Project → Deploy from GitHub repo.
+#   3. Railway auto-detects this file.
+#   4. Set secret env vars in Railway dashboard → Variables:
+#        GEMINI_API_KEY   = your Gemini API key
+#        ALLOWED_ORIGINS  = https://lovechauhan-18.github.io
+
+[build]
+builder = "NIXPACKS"
+buildCommand = "pip install -r requirements.txt"
+
+[deploy]
+startCommand = "uvicorn main:app --host 0.0.0.0 --port $PORT"
+healthcheckPath = "/health"
+healthcheckTimeout = 30         # seconds
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 3
+
+# Root directory (all commands run from here)
+# Set this in the Railway dashboard:  Settings → Source → Root Directory → backend
+
+[environments.production.variables]
+RATE_LIMIT_PER_MINUTE = "60"
+MAX_REQUEST_BYTES = "1048576"
+# GEMINI_API_KEY and ALLOWED_ORIGINS must be added as SECRET variables in the dashboard.

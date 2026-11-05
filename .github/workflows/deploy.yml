@@ -1,0 +1,77 @@
+# HandDeck – GitHub Actions: build frontend → deploy to GitHub Pages
+# Triggers on every push to main and can also be run manually.
+#
+# Required repository settings (Settings → Pages, Variables, Secrets):
+#   Pages source      : GitHub Actions
+#   Variable (vars):  VITE_BACKEND_URL  e.g. https://handdeck-api.onrender.com
+#
+# The Vite base is hard-coded to /Handdeck/ here (matches the repo name).
+# If you ever rename the repo, update the `base` input in the build step.
+
+name: Deploy to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:   # allow manual runs from the Actions tab
+
+# Allow the GITHUB_TOKEN to write Pages content
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Only one Pages deployment at a time
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build frontend
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+        working-directory: frontend
+
+      - name: Build
+        # VITE_BASE controls the Vite `base` option for GitHub Pages sub-path routing.
+        # VITE_BACKEND_URL is read from the repository variable set in Settings → Variables.
+        # Both are injected as plain env vars; Vite picks them up via import.meta.env.
+        run: npm run build
+        working-directory: frontend
+        env:
+          VITE_BASE: /Handdeck/
+          VITE_BACKEND_URL: ${{ vars.VITE_BACKEND_URL }}
+          NODE_ENV: production
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: frontend/dist
+
+  deploy:
+    name: Deploy to GitHub Pages
+    needs: build
+    runs-on: ubuntu-latest
+
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+
+    steps:
+      - name: Deploy
+        id: deployment
+        uses: actions/deploy-pages@v4
