@@ -1,6 +1,6 @@
 /**
  * HandDeck - Seated WebXR Flashcards
- * Milestone 1 + 2: 5 Interactive Grabbable Flashcards with Zone Detection
+ * Milestone 1, 2 & 3: 5 Interactive Grabbable Flashcards with Voice & Zone Sorting
  */
 
 import {
@@ -30,10 +30,12 @@ import {
 import {
   isInsideKnowZone,
   isInsideReviseZone,
+  canDropIntoZone,
   snapCardToZone,
   updateStudyBuddy,
   resetStudyBuddy,
 } from './study-buddy.js';
+import { voice } from './voice.js';
 
 export interface FlashcardData {
   id: number;
@@ -109,7 +111,7 @@ export const Flashcard = createComponent(
 
 /**
  * Runtime record for a flashcard — holds its mesh, materials, initial
- * transform, card data, and Milestone 2 snap/lock state.
+ * transform, card data, and Milestone 2+3 snap/lock state.
  */
 export interface CardRecord {
   entity: Entity;
@@ -476,7 +478,7 @@ const tempPos = new Vector3();
 
 /**
  * ECS System managing interactive hover/grab visual feedback AND
- * Milestone 2 zone-detection + snap animation for flashcards.
+ * Milestone 2+3 zone-detection + snap animation for flashcards.
  */
 export class FlashcardSystem extends createSystem({
   cards: { required: [Flashcard] },
@@ -492,6 +494,8 @@ export class FlashcardSystem extends createSystem({
 
       if (isGrabbed) {
         record.hasBeenMoved = true;
+        // Unlock audio on first user pinch / grab
+        voice.unlockAudio();
       }
 
       if (record.lockedZone) {
@@ -516,7 +520,7 @@ export class FlashcardSystem extends createSystem({
       }
     });
 
-    // ---- 2. Delegate Teacher animations and trigger detection -----------------
+    // ---- 2. Delegate Teacher animations, voice, and trigger detection ---------
     updateStudyBuddy(delta, time, cardRecords);
 
     // ---- 3. Zone detection: check released unlocked cards --------------------
@@ -529,9 +533,13 @@ export class FlashcardSystem extends createSystem({
 
       card.mesh.getWorldPosition(tempPos);
       if (isInsideKnowZone(tempPos)) {
-        snapCardToZone(card, 'know');
+        if (canDropIntoZone()) {
+          snapCardToZone(card, 'know');
+        }
       } else if (isInsideReviseZone(tempPos)) {
-        snapCardToZone(card, 'revise');
+        if (canDropIntoZone()) {
+          snapCardToZone(card, 'revise');
+        }
       }
     }
 

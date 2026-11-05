@@ -1,6 +1,7 @@
 /**
- * HandDeck - Study Buddy Mechanics (Milestone 2)
- * Teacher Avatar, Question Display, Know/Revise Zones, Snap & Lock, and Counters.
+ * HandDeck - Study Buddy Mechanics (Milestone 2 + 3)
+ * Teacher Avatar, Question Display, Voice TTS & STT, Fallback Buttons,
+ * Know/Revise Zones with Snap & Lock, Recommendation Highlight, and Counters.
  */
 
 import {
@@ -21,21 +22,46 @@ import {
   TorusGeometry,
   Vector3,
 } from 'three';
-import { DistanceGrabbable, MovementMode, RayInteractable, World } from '@iwsdk/core';
+import {
+  DistanceGrabbable,
+  Entity,
+  Hovered,
+  MovementMode,
+  Pressed,
+  RayInteractable,
+  World,
+} from '@iwsdk/core';
 import type { CardRecord, FlashcardData } from './cards.js';
+import { voice } from './voice.js';
+
+export type SessionStage = 'IDLE' | 'QUESTION' | 'FEEDBACK' | 'SORTED';
 
 export interface StudyBuddyState {
   knowCount: number;
   reviseCount: number;
   activeQuestionCard: FlashcardData | null;
-  lastSortedMessage: string | null;
+  stage: SessionStage;
+  spokenCardId: number | null;
+  liveTranscript: string;
+  errorMessage: string | null;
+  feedbackText: string | null;
+  feedbackType: 'known' | 'unsure' | null;
+  suggestRevise: boolean;
+  canDrop: boolean;
 }
 
 export const studyBuddyState: StudyBuddyState = {
   knowCount: 0,
   reviseCount: 0,
   activeQuestionCard: null,
-  lastSortedMessage: null,
+  stage: 'IDLE',
+  spokenCardId: null,
+  liveTranscript: '',
+  errorMessage: null,
+  feedbackText: null,
+  feedbackType: null,
+  suggestRevise: false,
+  canDrop: false,
 };
 
 // Seated positions (all strictly within 60 cm reach of user at 0, 1.15, 0)
@@ -66,8 +92,25 @@ let knowBadgeTexture: CanvasTexture | null = null;
 let reviseZoneGroup: Group | null = null;
 let reviseZoneTexture: CanvasTexture | null = null;
 let reviseZoneCtx: CanvasRenderingContext2D | null = null;
+let reviseRimMat: MeshStandardMaterial | null = null;
 let reviseBadgeMesh: Mesh | null = null;
 let reviseBadgeTexture: CanvasTexture | null = null;
+
+// 3D Controls (Mic, Fallback buttons, Mute)
+interface ButtonControl {
+  entity: Entity;
+  mesh: Mesh;
+  texture: CanvasTexture;
+  material: MeshStandardMaterial;
+  baseColor: Color;
+  wasPressed: boolean;
+  onClick: () => void;
+}
+
+let micControl: ButtonControl | null = null;
+let knewItControl: ButtonControl | null = null;
+let notSureControl: ButtonControl | null = null;
+let muteControl: ButtonControl | null = null;
 
 /** Helper for canvas rounded rectangles */
 function roundRect(
@@ -117,17 +160,16 @@ function wrapText(
   return y + lineHeight;
 }
 
-/** Render Teacher screen */
-function renderTeacherScreen(
-  card: FlashcardData | null,
-  statusOverride?: string
-): void {
+/** Render Teacher Screen */
+function renderTeacherScreen(): void {
   if (!teacherScreenCtx || !teacherScreenTexture) return;
   const ctx = teacherScreenCtx;
   const w = 1024;
   const h = 600;
+  const state = studyBuddyState;
+  const card = state.activeQuestionCard;
 
-  // Background
+  // Background gradient
   const grad = ctx.createLinearGradient(0, 0, 0, h);
   grad.addColorStop(0, '#0f172a');
   grad.addColorStop(1, '#020617');
@@ -141,7 +183,7 @@ function renderTeacherScreen(
   ctx.stroke();
 
   // Top header bar
-  roundRect(ctx, 40, 36, 440, 56, 28);
+  roundRect(ctx, 40, 34, 400, 52, 26);
   ctx.fillStyle = card ? 'rgba(56, 189, 248, 0.2)' : 'rgba(14, 165, 233, 0.15)';
   ctx.fill();
   ctx.lineWidth = 2;
@@ -149,45 +191,47 @@ function renderTeacherScreen(
   ctx.stroke();
 
   ctx.fillStyle = '#38bdf8';
-  ctx.font = 'bold 26px system-ui, sans-serif';
+  ctx.font = 'bold 24px system-ui, sans-serif';
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
-  ctx.fillText('🎓 TEACHER COMPANION', 260, 64);
+  ctx.fillText('🎓 TEACHER COMPANION', 240, 60);
 
-  // Status badge (top right)
-  roundRect(ctx, w - 340, 36, 300, 56, 28);
-  ctx.fillStyle = card
-    ? 'rgba(34, 197, 94, 0.2)'
-    : statusOverride
-    ? 'rgba(249, 115, 22, 0.2)'
-    : 'rgba(255, 255, 255, 0.08)';
+  // Top status badge (top right)
+  roundRect(ctx, w - 380, 34, 340, 52, 26);
+  const badgeColor =
+    state.stage === 'FEEDBACK'
+      ? '#22c55e'
+      : state.stage === 'QUESTION'
+      ? '#38bdf8'
+      : '#94a3b8';
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.4)';
   ctx.fill();
   ctx.lineWidth = 2;
-  ctx.strokeStyle = card
-    ? '#22c55e'
-    : statusOverride
-    ? '#f97316'
-    : 'rgba(255, 255, 255, 0.2)';
+  ctx.strokeStyle = badgeColor;
   ctx.stroke();
 
-  ctx.fillStyle = card ? '#4ade80' : statusOverride ? '#fb923c' : '#94a3b8';
-  ctx.font = '600 22px system-ui, sans-serif';
-  ctx.textAlign = 'center';
-  const badgeLabel = card
-    ? `CARD #${card.id} IN FOCUS`
-    : statusOverride || 'WAITING FOR CARD';
-  ctx.fillText(badgeLabel, w - 190, 64);
+  ctx.fillStyle = badgeColor;
+  ctx.font = '600 20px system-ui, sans-serif';
+  let badgeText = 'WAITING FOR CARD';
+  if (state.stage === 'QUESTION') {
+    badgeText = voice.isListening() ? '🎙 LISTENING...' : `CARD #${card?.id} • ANSWER NOW`;
+  } else if (state.stage === 'FEEDBACK') {
+    badgeText = 'READY TO SORT';
+  } else if (state.stage === 'SORTED') {
+    badgeText = 'CARD SORTED';
+  }
+  ctx.fillText(badgeText, w - 210, 60);
 
   ctx.textAlign = 'left';
 
-  if (card) {
+  if (state.stage === 'QUESTION' && card) {
     // Category & Title
     ctx.fillStyle = card.accentColor;
-    ctx.font = 'bold 28px system-ui, sans-serif';
-    ctx.fillText(`${card.category} • ${card.title.toUpperCase()}`, 50, 140);
+    ctx.font = 'bold 26px system-ui, sans-serif';
+    ctx.fillText(`${card.category} • ${card.title.toUpperCase()}`, 50, 130);
 
     // Question Box
-    roundRect(ctx, 40, 165, w - 80, 245, 24);
+    roundRect(ctx, 40, 150, w - 80, 175, 20);
     ctx.fillStyle = 'rgba(255, 255, 255, 0.04)';
     ctx.fill();
     ctx.lineWidth = 2;
@@ -195,57 +239,143 @@ function renderTeacherScreen(
     ctx.stroke();
 
     ctx.fillStyle = '#ffffff';
-    ctx.font = 'bold 40px system-ui, sans-serif';
-    wrapText(ctx, card.question, 70, 230, w - 140, 52);
+    ctx.font = 'bold 36px system-ui, sans-serif';
+    wrapText(ctx, card.question, 65, 205, w - 130, 46);
+
+    // Voice / Transcript / Status Box
+    roundRect(ctx, 40, 340, w - 80, 125, 18);
+    ctx.fillStyle = 'rgba(15, 23, 42, 0.6)';
+    ctx.fill();
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = state.errorMessage ? '#ef4444' : '#38bdf8';
+    ctx.stroke();
+
+    if (state.errorMessage) {
+      ctx.fillStyle = '#f87171';
+      ctx.font = '600 24px system-ui, sans-serif';
+      ctx.fillText(`⚠️ ${state.errorMessage}`, 65, 390);
+      ctx.fillStyle = '#cbd5e1';
+      ctx.font = '400 22px system-ui, sans-serif';
+      ctx.fillText('Please click "I knew it" or "Not sure" buttons below.', 65, 430);
+    } else if (voice.isListening()) {
+      ctx.fillStyle = '#f43f5e';
+      ctx.font = 'bold 24px system-ui, sans-serif';
+      ctx.fillText('🔴 Listening to your voice...', 65, 380);
+      ctx.fillStyle = '#38bdf8';
+      ctx.font = 'italic 26px system-ui, sans-serif';
+      ctx.fillText(state.liveTranscript ? `"${state.liveTranscript}"` : 'Say your answer aloud now...', 65, 425);
+    } else {
+      ctx.fillStyle = '#38bdf8';
+      ctx.font = '600 24px system-ui, sans-serif';
+      ctx.fillText('🎙 Speak your answer with Mic or click a button below:', 65, 380);
+      ctx.fillStyle = '#94a3b8';
+      ctx.font = '400 22px system-ui, sans-serif';
+      ctx.fillText('Hands-only fallback: click [I Knew It] or [Not Sure] to answer.', 65, 425);
+    }
 
     // Guidance footer
-    ctx.fillStyle = '#cbd5e1';
-    ctx.font = '600 26px system-ui, sans-serif';
-    ctx.fillText('👉 Drop card in:  KNOW (Right / Green)  or  REVISE (Left / Orange)', 50, 450);
-  } else {
-    // Idle state or sorted message
-    if (statusOverride) {
+    ctx.fillStyle = '#94a3b8';
+    ctx.font = '500 22px system-ui, sans-serif';
+    ctx.fillText('🔒 Card is locked for sorting until you answer.', 50, 490);
+  } else if (state.stage === 'FEEDBACK' && card) {
+    // Feedback stage
+    const isUnsure = state.feedbackType === 'unsure';
+    ctx.fillStyle = isUnsure ? '#f97316' : '#22c55e';
+    ctx.font = 'bold 26px system-ui, sans-serif';
+    ctx.fillText(
+      isUnsure ? '↺ CONCEPT REVIEW' : '✓ EXCELLENT RECALL!',
+      50,
+      130
+    );
+
+    // Answer card box
+    roundRect(ctx, 40, 150, w - 80, 200, 20);
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.04)';
+    ctx.fill();
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = isUnsure ? 'rgba(249, 115, 22, 0.3)' : 'rgba(34, 197, 94, 0.3)';
+    ctx.stroke();
+
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.5)';
+    ctx.font = 'bold 22px system-ui, sans-serif';
+    ctx.fillText('KEY CONCEPT / ANSWER:', 65, 190);
+
+    ctx.fillStyle = '#f8fafc';
+    ctx.font = '500 32px system-ui, sans-serif';
+    wrapText(ctx, card.answer, 65, 240, w - 130, 42);
+
+    // Sorting prompt box
+    roundRect(ctx, 40, 365, w - 80, 105, 18);
+    ctx.fillStyle = isUnsure ? 'rgba(249, 115, 22, 0.12)' : 'rgba(34, 197, 94, 0.12)';
+    ctx.fill();
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = isUnsure ? '#f97316' : '#22c55e';
+    ctx.stroke();
+
+    if (isUnsure) {
+      ctx.fillStyle = '#fb923c';
+      ctx.font = 'bold 26px system-ui, sans-serif';
+      ctx.fillText('★ RECOMMENDED: Drop into REVISE (Left / Orange) tray!', 65, 410);
+      ctx.fillStyle = '#cbd5e1';
+      ctx.font = '400 22px system-ui, sans-serif';
+      ctx.fillText('You can also drop into KNOW if you feel comfortable.', 65, 445);
+    } else {
       ctx.fillStyle = '#4ade80';
-      ctx.font = 'bold 44px system-ui, sans-serif';
-      ctx.fillText(statusOverride, 50, 190);
+      ctx.font = 'bold 26px system-ui, sans-serif';
+      ctx.fillText('👉 Ready! Drop card in KNOW (Right / Green) or REVISE (Left / Orange)', 65, 415);
+      ctx.fillStyle = '#cbd5e1';
+      ctx.font = '400 22px system-ui, sans-serif';
+      ctx.fillText('Card is now unlocked for sorting into either zone.', 65, 448);
+    }
+
+    ctx.fillStyle = '#94a3b8';
+    ctx.font = '500 22px system-ui, sans-serif';
+    ctx.fillText('Pick up and place the card into your desired tray.', 50, 495);
+  } else {
+    // Idle or Sorted state
+    if (state.stage === 'SORTED') {
+      ctx.fillStyle = '#4ade80';
+      ctx.font = 'bold 40px system-ui, sans-serif';
+      ctx.fillText('✓ Card Sorted Successfully!', 50, 180);
 
       ctx.fillStyle = '#e2e8f0';
-      ctx.font = '400 32px system-ui, sans-serif';
-      ctx.fillText('Great job! Pick up your next card from the floating arc.', 50, 260);
-      ctx.fillText('Bring it here to read its question.', 50, 315);
+      ctx.font = '400 30px system-ui, sans-serif';
+      ctx.fillText('Grab your next flashcard from the arc to continue.', 50, 245);
+      ctx.fillText('Bring it in front of the Teacher to hear its question.', 50, 295);
     } else {
       ctx.fillStyle = '#ffffff';
       ctx.font = 'bold 42px system-ui, sans-serif';
-      ctx.fillText('Bring a flashcard here to test yourself!', 50, 200);
+      ctx.fillText('Bring a flashcard here to test yourself!', 50, 180);
 
       ctx.fillStyle = '#94a3b8';
-      ctx.font = '400 30px system-ui, sans-serif';
-      ctx.fillText('1. Grab any floating card with pinch gesture.', 50, 270);
-      ctx.fillText('2. Hold or drop it in front of me to read the question.', 50, 325);
-      ctx.fillText('3. Sort into KNOW (Green) or REVISE (Orange) tray.', 50, 380);
+      ctx.font = '400 28px system-ui, sans-serif';
+      ctx.fillText('1. Grab any floating card with a pinch gesture.', 50, 245);
+      ctx.fillText('2. Bring it to the Teacher to hear its question aloud.', 50, 295);
+      ctx.fillText('3. Speak answer with Mic or click [I Knew It] / [Not Sure].', 50, 345);
+      ctx.fillText('4. Drop into KNOW (Green) or REVISE (Orange) tray.', 50, 395);
     }
   }
 
   // Bottom stats counter strip
-  roundRect(ctx, 40, 500, w - 80, 64, 20);
+  roundRect(ctx, 40, 520, w - 80, 54, 18);
   ctx.fillStyle = 'rgba(0, 0, 0, 0.45)';
   ctx.fill();
   ctx.lineWidth = 2;
   ctx.strokeStyle = 'rgba(255, 255, 255, 0.1)';
   ctx.stroke();
 
-  ctx.font = '600 24px system-ui, sans-serif';
+  ctx.font = '600 22px system-ui, sans-serif';
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
 
   ctx.fillStyle = '#22c55e';
-  ctx.fillText(`✓ KNOW: ${studyBuddyState.knowCount}`, 260, 532);
+  ctx.fillText(`✓ KNOW: ${state.knowCount}`, 260, 547);
 
   ctx.fillStyle = 'rgba(255, 255, 255, 0.2)';
-  ctx.fillText('|', 512, 532);
+  ctx.fillText('|', 512, 547);
 
   ctx.fillStyle = '#f97316';
-  ctx.fillText(`↺ REVISE: ${studyBuddyState.reviseCount}`, 760, 532);
+  ctx.fillText(`↺ REVISE: ${state.reviseCount}`, 760, 547);
 
   teacherScreenTexture.needsUpdate = true;
 }
@@ -255,14 +385,15 @@ function renderZoneSurface(
   ctx: CanvasRenderingContext2D,
   texture: CanvasTexture,
   type: 'know' | 'revise',
-  count: number
+  count: number,
+  highlight = false
 ): void {
   const w = 1024;
   const h = 860;
   const isKnow = type === 'know';
-  const mainColor = isKnow ? '#22c55e' : '#f97316';
+  const mainColor = isKnow ? '#22c55e' : highlight ? '#ff8a00' : '#f97316';
   const bgGrad = ctx.createLinearGradient(0, 0, 0, h);
-  bgGrad.addColorStop(0, isKnow ? '#052e16' : '#431407');
+  bgGrad.addColorStop(0, isKnow ? '#052e16' : highlight ? '#571c08' : '#431407');
   bgGrad.addColorStop(1, '#090d16');
 
   ctx.fillStyle = bgGrad;
@@ -270,7 +401,7 @@ function renderZoneSurface(
 
   // Border
   roundRect(ctx, 16, 16, w - 32, h - 32, 40);
-  ctx.lineWidth = 18;
+  ctx.lineWidth = highlight ? 24 : 18;
   ctx.strokeStyle = mainColor;
   ctx.stroke();
 
@@ -281,15 +412,15 @@ function renderZoneSurface(
   // Icon symbol
   ctx.fillStyle = mainColor;
   ctx.font = 'bold 150px system-ui, sans-serif';
-  ctx.fillText(isKnow ? '✓' : '↺', w / 2, 220);
+  ctx.fillText(isKnow ? '✓' : '↺', w / 2, 210);
 
   // Label
   ctx.fillStyle = '#ffffff';
   ctx.font = 'bold 74px system-ui, sans-serif';
-  ctx.fillText(isKnow ? 'KNOW' : 'REVISE', w / 2, 390);
+  ctx.fillText(isKnow ? 'KNOW' : highlight ? 'REVISE ★' : 'REVISE', w / 2, 380);
 
   // Counter Box
-  roundRect(ctx, 180, 480, w - 360, 180, 36);
+  roundRect(ctx, 180, 470, w - 360, 180, 36);
   ctx.fillStyle = 'rgba(0, 0, 0, 0.55)';
   ctx.fill();
   ctx.lineWidth = 4;
@@ -298,13 +429,17 @@ function renderZoneSurface(
 
   ctx.fillStyle = mainColor;
   ctx.font = 'bold 84px system-ui, sans-serif';
-  ctx.fillText(`${count} CARDS`, w / 2, 570);
+  ctx.fillText(`${count} CARDS`, w / 2, 560);
 
   // Instructions
-  ctx.fillStyle = '#94a3b8';
-  ctx.font = '500 34px system-ui, sans-serif';
+  ctx.fillStyle = highlight ? '#fdba74' : '#94a3b8';
+  ctx.font = highlight ? 'bold 38px system-ui, sans-serif' : '500 34px system-ui, sans-serif';
   ctx.fillText(
-    isKnow ? 'Drop here if mastered' : 'Drop here to practice again',
+    highlight
+      ? '★ SUGGESTED TRAY ★'
+      : isKnow
+      ? 'Drop here if mastered'
+      : 'Drop here to practice again',
     w / 2,
     730
   );
@@ -316,34 +451,125 @@ function renderZoneSurface(
 function renderBadge(
   texture: CanvasTexture,
   type: 'know' | 'revise',
-  count: number
+  count: number,
+  highlight = false
 ): void {
   const canvas = texture.image as HTMLCanvasElement;
   const ctx = canvas.getContext('2d')!;
   const w = canvas.width;
   const h = canvas.height;
   const isKnow = type === 'know';
-  const color = isKnow ? '#22c55e' : '#f97316';
+  const color = isKnow ? '#22c55e' : highlight ? '#ff8a00' : '#f97316';
 
   ctx.clearRect(0, 0, w, h);
 
   roundRect(ctx, 6, 6, w - 12, h - 12, 28);
   ctx.fillStyle = '#0f172a';
   ctx.fill();
-  ctx.lineWidth = 6;
+  ctx.lineWidth = highlight ? 8 : 6;
   ctx.strokeStyle = color;
   ctx.stroke();
 
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   ctx.fillStyle = color;
-  ctx.font = 'bold 44px system-ui, sans-serif';
-  ctx.fillText(isKnow ? `KNOW: ${count}` : `REVISE: ${count}`, w / 2, h / 2);
+  ctx.font = 'bold 42px system-ui, sans-serif';
+  const label = highlight ? `REVISE: ${count} ★` : isKnow ? `KNOW: ${count}` : `REVISE: ${count}`;
+  ctx.fillText(label, w / 2, h / 2);
 
   texture.needsUpdate = true;
 }
 
-/** Create and initialize Teacher avatar and display screen */
+/** Render 3D Button texture */
+function renderButtonTexture(
+  texture: CanvasTexture,
+  label: string,
+  bgColor: string,
+  borderColor: string,
+  textColor = '#ffffff'
+): void {
+  const canvas = texture.image as HTMLCanvasElement;
+  const ctx = canvas.getContext('2d')!;
+  const w = canvas.width;
+  const h = canvas.height;
+
+  ctx.clearRect(0, 0, w, h);
+
+  roundRect(ctx, 6, 6, w - 12, h - 12, 22);
+  ctx.fillStyle = bgColor;
+  ctx.fill();
+  ctx.lineWidth = 6;
+  ctx.strokeStyle = borderColor;
+  ctx.stroke();
+
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillStyle = textColor;
+  ctx.font = 'bold 36px system-ui, sans-serif';
+  ctx.fillText(label, w / 2, h / 2);
+
+  texture.needsUpdate = true;
+}
+
+/** Create a ray-interactable 3D button */
+function create3DButton(
+  world: World,
+  width: number,
+  height: number,
+  label: string,
+  pos: Vector3,
+  rot: Euler,
+  bgColor: string,
+  borderColor: string,
+  onClick: () => void
+): ButtonControl {
+  const canvas = document.createElement('canvas');
+  canvas.width = 512;
+  canvas.height = 180;
+  const texture = new CanvasTexture(canvas);
+  texture.colorSpace = SRGBColorSpace;
+
+  renderButtonTexture(texture, label, bgColor, borderColor);
+
+  const geo = new BoxGeometry(width, height, 0.015);
+  const faceMat = new MeshStandardMaterial({
+    map: texture,
+    roughness: 0.35,
+    metalness: 0.1,
+    emissive: new Color(borderColor),
+    emissiveIntensity: 0.15,
+  });
+  const edgeMat = new MeshStandardMaterial({
+    color: 0x1e293b,
+    roughness: 0.5,
+  });
+
+  const mesh = new Mesh(geo, [
+    edgeMat,
+    edgeMat,
+    edgeMat,
+    edgeMat,
+    faceMat, // +Z
+    edgeMat,
+  ]);
+  mesh.position.copy(pos);
+  mesh.rotation.copy(rot);
+
+  const entity = world.createTransformEntity(mesh);
+  entity.addComponent(RayInteractable);
+
+  return {
+    entity,
+    mesh,
+    texture,
+    material: faceMat,
+    baseColor: new Color(borderColor),
+    wasPressed: false,
+    onClick,
+  };
+}
+
+/** Create and initialize Teacher avatar, screen, and 3D controls */
 export function createTeacher(world: World): void {
   teacherGroup = new Group();
   teacherGroup.name = 'teacher-area';
@@ -412,7 +638,6 @@ export function createTeacher(world: World): void {
     screenEdgeMat,
   ]);
   teacherScreenMesh.position.set(0, -0.02, 0);
-  // Angle slightly upwards to comfortably face seated user (at y=1.15)
   teacherScreenMesh.rotation.x = -0.10;
   teacherGroup.add(teacherScreenMesh);
 
@@ -430,7 +655,62 @@ export function createTeacher(world: World): void {
   teacherGroup.add(triggerRingMesh);
 
   world.createTransformEntity(teacherGroup);
-  renderTeacherScreen(null);
+  renderTeacherScreen();
+
+  // Create 3D Interaction Buttons directly in front of the seated user
+  const buttonRot = new Euler(-0.16, 0, 0);
+
+  // 1. "Not sure" fallback button (Left of center, Orange)
+  notSureControl = create3DButton(
+    world,
+    0.13,
+    0.046,
+    '❓ Not sure',
+    new Vector3(-0.155, 1.05, -0.45),
+    buttonRot,
+    '#431407',
+    '#f97316',
+    () => handleVoiceAnswer('unsure')
+  );
+
+  // 2. "Mic" button (Center, Cyan / Red)
+  micControl = create3DButton(
+    world,
+    0.13,
+    0.046,
+    '🎙 Speak',
+    new Vector3(0.0, 1.05, -0.45),
+    buttonRot,
+    '#0c4a6e',
+    '#0284c7',
+    () => toggleMic()
+  );
+
+  // 3. "I knew it" fallback button (Right of center, Green)
+  knewItControl = create3DButton(
+    world,
+    0.13,
+    0.046,
+    '✓ I knew it',
+    new Vector3(0.155, 1.05, -0.45),
+    buttonRot,
+    '#052e16',
+    '#22c55e',
+    () => handleVoiceAnswer('known')
+  );
+
+  // 4. "Mute" toggle button (Upper right corner of controls)
+  muteControl = create3DButton(
+    world,
+    0.085,
+    0.034,
+    '🔊 Mute',
+    new Vector3(0.25, 1.14, -0.47),
+    buttonRot,
+    '#1e293b',
+    '#64748b',
+    () => toggleMute()
+  );
 }
 
 /** Create Know (Green) and Revise (Orange) zones */
@@ -460,7 +740,7 @@ export function createZones(world: World): void {
     roughness: 0.35,
     metalness: 0.1,
   });
-  const reviseRimMat = new MeshStandardMaterial({
+  reviseRimMat = new MeshStandardMaterial({
     color: 0xf97316,
     emissive: new Color('#f97316'),
     emissiveIntensity: 0.4,
@@ -475,7 +755,6 @@ export function createZones(world: World): void {
     reviseRimMat,
     reviseRimMat,
   ]);
-  // Slight tilt facing seated user
   reviseMesh.rotation.x = -0.15;
   reviseMesh.rotation.y = 0.32;
   reviseZoneGroup.add(reviseMesh);
@@ -567,6 +846,144 @@ export function createZones(world: World): void {
   world.createTransformEntity(knowZoneGroup);
 }
 
+/** Called when a card enters the teacher trigger zone */
+export function onCardTrigger(card: FlashcardData): void {
+  // If card changed or first time entering
+  if (studyBuddyState.activeQuestionCard?.id !== card.id) {
+    studyBuddyState.activeQuestionCard = card;
+    studyBuddyState.stage = 'QUESTION';
+    studyBuddyState.liveTranscript = '';
+    studyBuddyState.errorMessage = null;
+    studyBuddyState.feedbackText = null;
+    studyBuddyState.feedbackType = null;
+    studyBuddyState.canDrop = false;
+    studyBuddyState.suggestRevise = false;
+
+    renderTeacherScreen();
+
+    // Read question aloud via voice provider
+    if (studyBuddyState.spokenCardId !== card.id) {
+      studyBuddyState.spokenCardId = card.id;
+      voice.unlockAudio();
+      voice.speak(card.question);
+    }
+  }
+}
+
+/** Check if current card is allowed to be dropped into a zone */
+export function canDropIntoZone(): boolean {
+  return studyBuddyState.canDrop;
+}
+
+/** Handle voice or fallback answer */
+export function handleVoiceAnswer(type: 'known' | 'unsure', transcript?: string): void {
+  if (!studyBuddyState.activeQuestionCard) return;
+
+  voice.stopListening();
+  voice.unlockAudio();
+
+  const card = studyBuddyState.activeQuestionCard;
+  studyBuddyState.stage = 'FEEDBACK';
+  studyBuddyState.feedbackType = type;
+  studyBuddyState.canDrop = true; // Unlock zone drop!
+  studyBuddyState.suggestRevise = type === 'unsure';
+
+  let responseSpeech = '';
+  if (type === 'known') {
+    responseSpeech = `Spot on! The answer is: ${card.answer}. You can now sort your card.`;
+    studyBuddyState.feedbackText = `Great recall! ${card.answer}`;
+  } else {
+    responseSpeech = `That's okay! ${card.answer}. Recommended: drop in revise.`;
+    studyBuddyState.feedbackText = `Review concept: ${card.answer}`;
+  }
+
+  // Update Revise tray suggestion visual
+  if (reviseZoneCtx && reviseZoneTexture && reviseBadgeTexture) {
+    renderZoneSurface(reviseZoneCtx, reviseZoneTexture, 'revise', studyBuddyState.reviseCount, type === 'unsure');
+    renderBadge(reviseBadgeTexture, 'revise', studyBuddyState.reviseCount, type === 'unsure');
+  }
+
+  renderTeacherScreen();
+  voice.speak(responseSpeech);
+
+  // Update HTML status
+  updateHtmlCounters();
+}
+
+/** Toggle microphone recording */
+export function toggleMic(): void {
+  voice.unlockAudio();
+
+  if (voice.isListening()) {
+    voice.stopListening();
+    if (micControl) {
+      renderButtonTexture(micControl.texture, '🎙 Speak', '#0c4a6e', '#0284c7');
+    }
+    return;
+  }
+
+  studyBuddyState.errorMessage = null;
+  studyBuddyState.liveTranscript = '';
+
+  if (!voice.isRecognitionSupported()) {
+    studyBuddyState.errorMessage = 'Mic recognition unsupported in this browser. Use buttons below.';
+    renderTeacherScreen();
+    return;
+  }
+
+  if (micControl) {
+    renderButtonTexture(micControl.texture, '🔴 Listening...', '#881337', '#f43f5e');
+  }
+
+  voice.startListening(
+    (text, isFinal) => {
+      studyBuddyState.liveTranscript = text;
+      renderTeacherScreen();
+
+      if (isFinal) {
+        if (micControl) {
+          renderButtonTexture(micControl.texture, '🎙 Speak', '#0c4a6e', '#0284c7');
+        }
+
+        // Analyze user answer
+        const lower = text.toLowerCase();
+        const unsurePhrases = ['not sure', 'dont know', "don't know", 'no idea', 'idk', 'unsure', 'forgot', 'no'];
+        const isUnsure = unsurePhrases.some((phrase) => lower.includes(phrase));
+
+        handleVoiceAnswer(isUnsure ? 'unsure' : 'known', text);
+      }
+    },
+    (errMsg) => {
+      studyBuddyState.errorMessage = errMsg;
+      if (micControl) {
+        renderButtonTexture(micControl.texture, '🎙 Speak', '#0c4a6e', '#0284c7');
+      }
+      renderTeacherScreen();
+    },
+    () => {
+      if (micControl) {
+        renderButtonTexture(micControl.texture, '🎙 Speak', '#0c4a6e', '#0284c7');
+      }
+    }
+  );
+
+  renderTeacherScreen();
+}
+
+/** Toggle mute */
+export function toggleMute(): void {
+  const isMuted = voice.toggleMuted();
+  if (muteControl) {
+    renderButtonTexture(
+      muteControl.texture,
+      isMuted ? '🔇 Unmute' : '🔊 Mute',
+      isMuted ? '#450a0a' : '#1e293b',
+      isMuted ? '#ef4444' : '#64748b'
+    );
+  }
+  updateHtmlCounters();
+}
+
 /** Snap a card into Know or Revise zone and lock it */
 export function snapCardToZone(card: CardRecord, zone: 'know' | 'revise'): void {
   if (card.lockedZone) return;
@@ -614,20 +1031,23 @@ export function snapCardToZone(card: CardRecord, zone: 'know' | 'revise'): void 
     studyBuddyState.reviseCount++;
   }
 
-  // Update displays
+  // Reset suggestion highlight
+  studyBuddyState.suggestRevise = false;
+  studyBuddyState.canDrop = false;
+  studyBuddyState.stage = 'SORTED';
+  studyBuddyState.activeQuestionCard = null;
+
+  // Update zone displays
   if (knowZoneCtx && knowZoneTexture && knowBadgeTexture) {
     renderZoneSurface(knowZoneCtx, knowZoneTexture, 'know', studyBuddyState.knowCount);
     renderBadge(knowBadgeTexture, 'know', studyBuddyState.knowCount);
   }
   if (reviseZoneCtx && reviseZoneTexture && reviseBadgeTexture) {
-    renderZoneSurface(reviseZoneCtx, reviseZoneTexture, 'revise', studyBuddyState.reviseCount);
-    renderBadge(reviseBadgeTexture, 'revise', studyBuddyState.reviseCount);
+    renderZoneSurface(reviseZoneCtx, reviseZoneTexture, 'revise', studyBuddyState.reviseCount, false);
+    renderBadge(reviseBadgeTexture, 'revise', studyBuddyState.reviseCount, false);
   }
 
-  const feedbackMsg = `✓ Sorted Card #${card.data.id} into ${zone.toUpperCase()}!`;
-  studyBuddyState.lastSortedMessage = feedbackMsg;
-  studyBuddyState.activeQuestionCard = null;
-  renderTeacherScreen(null, feedbackMsg);
+  renderTeacherScreen();
   updateHtmlCounters();
 }
 
@@ -660,16 +1080,27 @@ export function isInsideTeacherTrigger(pos: Vector3): boolean {
 function updateHtmlCounters(): void {
   const el = document.getElementById('hud-counters');
   if (el) {
-    el.innerHTML = `Know: <strong style="color: #4ade80;">${studyBuddyState.knowCount}</strong> | Revise: <strong style="color: #fb923c;">${studyBuddyState.reviseCount}</strong>`;
+    const isMuted = voice.isMuted();
+    el.innerHTML = `Know: <strong style="color: #4ade80;">${studyBuddyState.knowCount}</strong> | Revise: <strong style="color: #fb923c;">${studyBuddyState.reviseCount}</strong> | Voice: <strong style="color: ${isMuted ? '#f87171' : '#38bdf8'};">${isMuted ? 'Muted' : 'Active'}</strong>`;
   }
 }
 
 /** Resets all study session state, counters, teacher screen, and cards */
 export function resetStudyBuddy(cards: CardRecord[]): void {
+  voice.stopSpeaking();
+  voice.stopListening();
+
   studyBuddyState.knowCount = 0;
   studyBuddyState.reviseCount = 0;
   studyBuddyState.activeQuestionCard = null;
-  studyBuddyState.lastSortedMessage = null;
+  studyBuddyState.stage = 'IDLE';
+  studyBuddyState.spokenCardId = null;
+  studyBuddyState.liveTranscript = '';
+  studyBuddyState.errorMessage = null;
+  studyBuddyState.feedbackText = null;
+  studyBuddyState.feedbackType = null;
+  studyBuddyState.suggestRevise = false;
+  studyBuddyState.canDrop = false;
 
   cards.forEach((card) => {
     card.lockedZone = null;
@@ -698,17 +1129,21 @@ export function resetStudyBuddy(cards: CardRecord[]): void {
     renderBadge(knowBadgeTexture, 'know', 0);
   }
   if (reviseZoneCtx && reviseZoneTexture && reviseBadgeTexture) {
-    renderZoneSurface(reviseZoneCtx, reviseZoneTexture, 'revise', 0);
-    renderBadge(reviseBadgeTexture, 'revise', 0);
+    renderZoneSurface(reviseZoneCtx, reviseZoneTexture, 'revise', 0, false);
+    renderBadge(reviseBadgeTexture, 'revise', 0, false);
   }
 
-  renderTeacherScreen(null);
+  if (micControl) {
+    renderButtonTexture(micControl.texture, '🎙 Speak', '#0c4a6e', '#0284c7');
+  }
+
+  renderTeacherScreen();
   updateHtmlCounters();
 }
 
 const tempPos = new Vector3();
 
-/** Frame loop update for Teacher animations and trigger detection */
+/** Frame loop update for Teacher animations, 3D button clicks, and trigger detection */
 export function updateStudyBuddy(
   delta: number,
   time: number,
@@ -733,12 +1168,42 @@ export function updateStudyBuddy(
     (triggerRingMesh.material as MeshBasicMaterial).opacity = pulse;
   }
 
-  // 2. Check Teacher Trigger zone proximity
+  // 2. Pulse Revise tray highlight if recommended
+  if (studyBuddyState.suggestRevise && reviseRimMat) {
+    const pulse = 0.5 + Math.sin(time * 6) * 0.35;
+    reviseRimMat.emissiveIntensity = pulse;
+  } else if (reviseRimMat) {
+    reviseRimMat.emissiveIntensity = 0.4;
+  }
+
+  // 3. Process 3D Button Clicks and Hover glows
+  const controls = [notSureControl, micControl, knewItControl, muteControl];
+  for (const ctrl of controls) {
+    if (!ctrl) continue;
+
+    const isPressed = ctrl.entity.hasComponent(Pressed);
+    const isHovered = ctrl.entity.hasComponent(Hovered);
+
+    // Visual press/hover feedback
+    ctrl.material.emissiveIntensity = isPressed ? 0.75 : isHovered ? 0.45 : 0.18;
+    if (isPressed) {
+      ctrl.mesh.scale.set(0.96, 0.96, 0.96);
+    } else {
+      ctrl.mesh.scale.set(1.0, 1.0, 1.0);
+    }
+
+    if (isPressed && !ctrl.wasPressed) {
+      voice.unlockAudio();
+      ctrl.onClick();
+    }
+    ctrl.wasPressed = isPressed;
+  }
+
+  // 4. Check Teacher Trigger zone proximity
   let detectedCard: FlashcardData | null = null;
   let minDistance = TEACHER_TRIGGER_RADIUS;
 
   for (const card of cards) {
-    // Ignore cards that are already locked into Know or Revise
     if (card.lockedZone) continue;
 
     card.mesh.getWorldPosition(tempPos);
@@ -750,14 +1215,6 @@ export function updateStudyBuddy(
   }
 
   if (detectedCard !== null) {
-    if (detectedCard !== studyBuddyState.activeQuestionCard) {
-      studyBuddyState.activeQuestionCard = detectedCard;
-      studyBuddyState.lastSortedMessage = null;
-      renderTeacherScreen(detectedCard);
-    }
-  } else if (studyBuddyState.activeQuestionCard !== null) {
-    // Card was removed from trigger zone without snapping
-    studyBuddyState.activeQuestionCard = null;
-    renderTeacherScreen(null, studyBuddyState.lastSortedMessage ?? undefined);
+    onCardTrigger(detectedCard);
   }
 }
