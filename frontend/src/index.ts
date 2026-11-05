@@ -1,5 +1,5 @@
 /**
- * HandDeck - Seated WebXR Entry Point (Milestone 3)
+ * HandDeck - Seated WebXR Entry Point (Milestone 4)
  */
 
 import { World } from '@iwsdk/core';
@@ -10,6 +10,7 @@ import {
   createTeacher,
   createZones,
   handleVoiceAnswer,
+  selectTopic,
   toggleMic,
   toggleMute,
 } from './study-buddy.js';
@@ -50,6 +51,23 @@ World.create(
   });
   document.getElementById('btn-not-sure')?.addEventListener('click', () => {
     handleVoiceAnswer('unsure');
+  });
+
+  // Topic Buttons in HUD
+  document.getElementById('btn-topic-bio')?.addEventListener('click', () => {
+    selectTopic('Biology');
+  });
+  document.getElementById('btn-topic-phys')?.addEventListener('click', () => {
+    selectTopic('Physics');
+  });
+  document.getElementById('btn-topic-space')?.addEventListener('click', () => {
+    selectTopic('Space');
+  });
+  document.getElementById('btn-topic-hist')?.addEventListener('click', () => {
+    selectTopic('History');
+  });
+  document.getElementById('btn-topic-py')?.addEventListener('click', () => {
+    selectTopic('Python');
   });
 
   // Convenient keyboard shortcuts for desktop Chrome

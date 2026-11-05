@@ -1,7 +1,7 @@
 /**
- * HandDeck - Study Buddy Mechanics (Milestone 2 + 3)
- * Teacher Avatar, Question Display, Voice TTS & STT, Fallback Buttons,
- * Know/Revise Zones with Snap & Lock, Recommendation Highlight, and Counters.
+ * HandDeck - Study Buddy Mechanics (Milestones 2, 3 & 4)
+ * Teacher Avatar, Question Display, Swappable Topic Chips, AI Evaluation,
+ * Know/Revise Zones, Recommendation Highlight, and Strict Fallbacks.
  */
 
 import {
@@ -32,9 +32,11 @@ import {
   World,
 } from '@iwsdk/core';
 import type { CardRecord, FlashcardData } from './cards.js';
+import { replaceFlashcards } from './cards.js';
 import { voice } from './voice.js';
+import { fetchTopicCards, evaluateAnswer } from './api.js';
 
-export type SessionStage = 'IDLE' | 'QUESTION' | 'FEEDBACK' | 'SORTED';
+export type SessionStage = 'IDLE' | 'QUESTION' | 'EVALUATING' | 'FEEDBACK' | 'SORTED';
 
 export interface StudyBuddyState {
   knowCount: number;
@@ -48,6 +50,10 @@ export interface StudyBuddyState {
   feedbackType: 'known' | 'unsure' | null;
   suggestRevise: boolean;
   canDrop: boolean;
+  currentTopic: string;
+  isLoadingCards: boolean;
+  loadingTopicName: string;
+  backendNotice: string | null;
 }
 
 export const studyBuddyState: StudyBuddyState = {
@@ -62,6 +68,10 @@ export const studyBuddyState: StudyBuddyState = {
   feedbackType: null,
   suggestRevise: false,
   canDrop: false,
+  currentTopic: 'Biology',
+  isLoadingCards: false,
+  loadingTopicName: '',
+  backendNotice: null,
 };
 
 // Seated positions (all strictly within 60 cm reach of user at 0, 1.15, 0)
@@ -96,8 +106,9 @@ let reviseRimMat: MeshStandardMaterial | null = null;
 let reviseBadgeMesh: Mesh | null = null;
 let reviseBadgeTexture: CanvasTexture | null = null;
 
-// 3D Controls (Mic, Fallback buttons, Mute)
+// 3D Controls (Mic, Fallback buttons, Mute, Topic Chips)
 interface ButtonControl {
+  id: string;
   entity: Entity;
   mesh: Mesh;
   texture: CanvasTexture;
@@ -111,6 +122,7 @@ let micControl: ButtonControl | null = null;
 let knewItControl: ButtonControl | null = null;
 let notSureControl: ButtonControl | null = null;
 let muteControl: ButtonControl | null = null;
+const topicControls: ButtonControl[] = [];
 
 /** Helper for canvas rounded rectangles */
 function roundRect(
@@ -183,7 +195,7 @@ function renderTeacherScreen(): void {
   ctx.stroke();
 
   // Top header bar
-  roundRect(ctx, 40, 34, 400, 52, 26);
+  roundRect(ctx, 40, 32, 420, 52, 26);
   ctx.fillStyle = card ? 'rgba(56, 189, 248, 0.2)' : 'rgba(14, 165, 233, 0.15)';
   ctx.fill();
   ctx.lineWidth = 2;
@@ -194,13 +206,15 @@ function renderTeacherScreen(): void {
   ctx.font = 'bold 24px system-ui, sans-serif';
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
-  ctx.fillText('🎓 TEACHER COMPANION', 240, 60);
+  ctx.fillText(`🎓 TEACHER • ${state.currentTopic.toUpperCase()}`, 250, 58);
 
   // Top status badge (top right)
-  roundRect(ctx, w - 380, 34, 340, 52, 26);
+  roundRect(ctx, w - 380, 32, 340, 52, 26);
   const badgeColor =
     state.stage === 'FEEDBACK'
       ? '#22c55e'
+      : state.stage === 'EVALUATING'
+      ? '#f59e0b'
       : state.stage === 'QUESTION'
       ? '#38bdf8'
       : '#94a3b8';
@@ -213,25 +227,71 @@ function renderTeacherScreen(): void {
   ctx.fillStyle = badgeColor;
   ctx.font = '600 20px system-ui, sans-serif';
   let badgeText = 'WAITING FOR CARD';
-  if (state.stage === 'QUESTION') {
+  if (state.isLoadingCards) {
+    badgeText = `GENERATING ${state.loadingTopicName.toUpperCase()}...`;
+  } else if (state.stage === 'QUESTION') {
     badgeText = voice.isListening() ? '🎙 LISTENING...' : `CARD #${card?.id} • ANSWER NOW`;
+  } else if (state.stage === 'EVALUATING') {
+    badgeText = '⏳ EVALUATING ANSWER...';
   } else if (state.stage === 'FEEDBACK') {
     badgeText = 'READY TO SORT';
   } else if (state.stage === 'SORTED') {
     badgeText = 'CARD SORTED';
   }
-  ctx.fillText(badgeText, w - 210, 60);
+  ctx.fillText(badgeText, w - 210, 58);
 
   ctx.textAlign = 'left';
 
-  if (state.stage === 'QUESTION' && card) {
+  // Notice banner (if backend is offline or fallback triggered)
+  if (state.backendNotice) {
+    roundRect(ctx, 40, 94, w - 80, 32, 10);
+    ctx.fillStyle = 'rgba(234, 88, 12, 0.2)';
+    ctx.fill();
+    ctx.fillStyle = '#fb923c';
+    ctx.font = '500 18px system-ui, sans-serif';
+    ctx.fillText(`⚠️ ${state.backendNotice}`, 54, 115);
+  }
+
+  if (state.isLoadingCards) {
+    // Topic card generation loading screen
+    ctx.fillStyle = '#38bdf8';
+    ctx.font = 'bold 38px system-ui, sans-serif';
+    ctx.fillText(`⏳ Generating ${state.loadingTopicName} Flashcards...`, 50, 200);
+
+    ctx.fillStyle = '#cbd5e1';
+    ctx.font = '400 26px system-ui, sans-serif';
+    ctx.fillText('Calling backend LLM API to create new structured questions.', 50, 260);
+    ctx.fillText('Automatic fallback will engage if server takes > 6 seconds.', 50, 310);
+
+    // Animated loading bar
+    roundRect(ctx, 50, 360, w - 100, 24, 12);
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.08)';
+    ctx.fill();
+    const loadW = ((Date.now() / 20) % (w - 100));
+    roundRect(ctx, 50, 360, loadW, 24, 12);
+    ctx.fillStyle = '#38bdf8';
+    ctx.fill();
+  } else if (state.stage === 'EVALUATING' && card) {
+    // Evaluating answer loading screen
+    ctx.fillStyle = '#f59e0b';
+    ctx.font = 'bold 36px system-ui, sans-serif';
+    ctx.fillText('⏳ Evaluating your answer with AI...', 50, 200);
+
+    ctx.fillStyle = '#f8fafc';
+    ctx.font = '600 28px system-ui, sans-serif';
+    ctx.fillText(`Your answer: "${state.liveTranscript || 'Answer submitted'}"`, 50, 265);
+
+    ctx.fillStyle = '#94a3b8';
+    ctx.font = '400 22px system-ui, sans-serif';
+    ctx.fillText('Analyzing conceptual accuracy and preparing spoken feedback...', 50, 330);
+  } else if (state.stage === 'QUESTION' && card) {
     // Category & Title
     ctx.fillStyle = card.accentColor;
     ctx.font = 'bold 26px system-ui, sans-serif';
-    ctx.fillText(`${card.category} • ${card.title.toUpperCase()}`, 50, 130);
+    ctx.fillText(`${card.category} • ${card.title.toUpperCase()}`, 50, 145);
 
     // Question Box
-    roundRect(ctx, 40, 150, w - 80, 175, 20);
+    roundRect(ctx, 40, 165, w - 80, 160, 20);
     ctx.fillStyle = 'rgba(255, 255, 255, 0.04)';
     ctx.fill();
     ctx.lineWidth = 2;
@@ -240,7 +300,7 @@ function renderTeacherScreen(): void {
 
     ctx.fillStyle = '#ffffff';
     ctx.font = 'bold 36px system-ui, sans-serif';
-    wrapText(ctx, card.question, 65, 205, w - 130, 46);
+    wrapText(ctx, card.question, 65, 218, w - 130, 46);
 
     // Voice / Transcript / Status Box
     roundRect(ctx, 40, 340, w - 80, 125, 18);
@@ -267,29 +327,25 @@ function renderTeacherScreen(): void {
     } else {
       ctx.fillStyle = '#38bdf8';
       ctx.font = '600 24px system-ui, sans-serif';
-      ctx.fillText('🎙 Speak your answer with Mic or click a button below:', 65, 380);
+      ctx.fillText('🎙 Speak answer with Mic or click fallback buttons below:', 65, 380);
       ctx.fillStyle = '#94a3b8';
       ctx.font = '400 22px system-ui, sans-serif';
-      ctx.fillText('Hands-only fallback: click [I Knew It] or [Not Sure] to answer.', 65, 425);
+      ctx.fillText('Hands-only fallback: click [I knew it] or [Not sure] to answer.', 65, 425);
     }
 
     // Guidance footer
     ctx.fillStyle = '#94a3b8';
     ctx.font = '500 22px system-ui, sans-serif';
-    ctx.fillText('🔒 Card is locked for sorting until you answer.', 50, 490);
+    ctx.fillText('🔒 Answer the question to unlock sorting into Know / Revise.', 50, 492);
   } else if (state.stage === 'FEEDBACK' && card) {
     // Feedback stage
     const isUnsure = state.feedbackType === 'unsure';
     ctx.fillStyle = isUnsure ? '#f97316' : '#22c55e';
     ctx.font = 'bold 26px system-ui, sans-serif';
-    ctx.fillText(
-      isUnsure ? '↺ CONCEPT REVIEW' : '✓ EXCELLENT RECALL!',
-      50,
-      130
-    );
+    ctx.fillText(isUnsure ? '↺ CONCEPT REVIEW' : '✓ EXCELLENT RECALL!', 50, 145);
 
-    // Answer card box
-    roundRect(ctx, 40, 150, w - 80, 200, 20);
+    // Feedback response box
+    roundRect(ctx, 40, 165, w - 80, 185, 20);
     ctx.fillStyle = 'rgba(255, 255, 255, 0.04)';
     ctx.fill();
     ctx.lineWidth = 2;
@@ -298,11 +354,11 @@ function renderTeacherScreen(): void {
 
     ctx.fillStyle = 'rgba(255, 255, 255, 0.5)';
     ctx.font = 'bold 22px system-ui, sans-serif';
-    ctx.fillText('KEY CONCEPT / ANSWER:', 65, 190);
+    ctx.fillText('TEACHER FEEDBACK & KEY CONCEPT:', 65, 205);
 
     ctx.fillStyle = '#f8fafc';
-    ctx.font = '500 32px system-ui, sans-serif';
-    wrapText(ctx, card.answer, 65, 240, w - 130, 42);
+    ctx.font = '500 30px system-ui, sans-serif';
+    wrapText(ctx, state.feedbackText || card.answer, 65, 250, w - 130, 40);
 
     // Sorting prompt box
     roundRect(ctx, 40, 365, w - 80, 105, 18);
@@ -318,14 +374,14 @@ function renderTeacherScreen(): void {
       ctx.fillText('★ RECOMMENDED: Drop into REVISE (Left / Orange) tray!', 65, 410);
       ctx.fillStyle = '#cbd5e1';
       ctx.font = '400 22px system-ui, sans-serif';
-      ctx.fillText('You can also drop into KNOW if you feel comfortable.', 65, 445);
+      ctx.fillText('You can still drop into KNOW if you feel confident.', 65, 445);
     } else {
       ctx.fillStyle = '#4ade80';
       ctx.font = 'bold 26px system-ui, sans-serif';
       ctx.fillText('👉 Ready! Drop card in KNOW (Right / Green) or REVISE (Left / Orange)', 65, 415);
       ctx.fillStyle = '#cbd5e1';
       ctx.font = '400 22px system-ui, sans-serif';
-      ctx.fillText('Card is now unlocked for sorting into either zone.', 65, 448);
+      ctx.fillText('Card is now unlocked for sorting into either tray.', 65, 448);
     }
 
     ctx.fillStyle = '#94a3b8';
@@ -335,24 +391,24 @@ function renderTeacherScreen(): void {
     // Idle or Sorted state
     if (state.stage === 'SORTED') {
       ctx.fillStyle = '#4ade80';
-      ctx.font = 'bold 40px system-ui, sans-serif';
+      ctx.font = 'bold 38px system-ui, sans-serif';
       ctx.fillText('✓ Card Sorted Successfully!', 50, 180);
 
       ctx.fillStyle = '#e2e8f0';
-      ctx.font = '400 30px system-ui, sans-serif';
+      ctx.font = '400 28px system-ui, sans-serif';
       ctx.fillText('Grab your next flashcard from the arc to continue.', 50, 245);
       ctx.fillText('Bring it in front of the Teacher to hear its question.', 50, 295);
     } else {
       ctx.fillStyle = '#ffffff';
-      ctx.font = 'bold 42px system-ui, sans-serif';
-      ctx.fillText('Bring a flashcard here to test yourself!', 50, 180);
+      ctx.font = 'bold 40px system-ui, sans-serif';
+      ctx.fillText(`Current Topic: ${state.currentTopic}`, 50, 180);
 
       ctx.fillStyle = '#94a3b8';
-      ctx.font = '400 28px system-ui, sans-serif';
-      ctx.fillText('1. Grab any floating card with a pinch gesture.', 50, 245);
-      ctx.fillText('2. Bring it to the Teacher to hear its question aloud.', 50, 295);
-      ctx.fillText('3. Speak answer with Mic or click [I Knew It] / [Not Sure].', 50, 345);
-      ctx.fillText('4. Drop into KNOW (Green) or REVISE (Orange) tray.', 50, 395);
+      ctx.font = '400 26px system-ui, sans-serif';
+      ctx.fillText('1. Choose any topic chip above to generate new flashcards.', 50, 240);
+      ctx.fillText('2. Grab any floating card to bring it to the Teacher.', 50, 290);
+      ctx.fillText('3. Speak answer or click [I knew it] / [Not sure] to grade.', 50, 340);
+      ctx.fillText('4. Drop into KNOW (Green) or REVISE (Orange) tray.', 50, 390);
     }
   }
 
@@ -514,6 +570,7 @@ function renderButtonTexture(
 /** Create a ray-interactable 3D button */
 function create3DButton(
   world: World,
+  id: string,
   width: number,
   height: number,
   label: string,
@@ -559,6 +616,7 @@ function create3DButton(
   entity.addComponent(RayInteractable);
 
   return {
+    id,
     entity,
     mesh,
     texture,
@@ -569,7 +627,7 @@ function create3DButton(
   };
 }
 
-/** Create and initialize Teacher avatar, screen, and 3D controls */
+/** Create and initialize Teacher avatar, screen, 3D controls, and Topic chips */
 export function createTeacher(world: World): void {
   teacherGroup = new Group();
   teacherGroup.name = 'teacher-area';
@@ -660,9 +718,10 @@ export function createTeacher(world: World): void {
   // Create 3D Interaction Buttons directly in front of the seated user
   const buttonRot = new Euler(-0.16, 0, 0);
 
-  // 1. "Not sure" fallback button (Left of center, Orange)
+  // 1. "Not sure" fallback button
   notSureControl = create3DButton(
     world,
+    'btn-not-sure',
     0.13,
     0.046,
     '❓ Not sure',
@@ -673,9 +732,10 @@ export function createTeacher(world: World): void {
     () => handleVoiceAnswer('unsure')
   );
 
-  // 2. "Mic" button (Center, Cyan / Red)
+  // 2. "Mic" button
   micControl = create3DButton(
     world,
+    'btn-mic',
     0.13,
     0.046,
     '🎙 Speak',
@@ -686,9 +746,10 @@ export function createTeacher(world: World): void {
     () => toggleMic()
   );
 
-  // 3. "I knew it" fallback button (Right of center, Green)
+  // 3. "I knew it" fallback button
   knewItControl = create3DButton(
     world,
+    'btn-knew',
     0.13,
     0.046,
     '✓ I knew it',
@@ -699,9 +760,10 @@ export function createTeacher(world: World): void {
     () => handleVoiceAnswer('known')
   );
 
-  // 4. "Mute" toggle button (Upper right corner of controls)
+  // 4. "Mute" toggle button
   muteControl = create3DButton(
     world,
+    'btn-mute',
     0.085,
     0.034,
     '🔊 Mute',
@@ -711,6 +773,62 @@ export function createTeacher(world: World): void {
     '#64748b',
     () => toggleMute()
   );
+
+  // 5. Large pinch-able Topic Chips placed in a comfortable arc above the Teacher
+  const topics = [
+    { name: 'Biology', icon: '🧬', color: '#38bdf8', bg: '#0c4a6e', x: -0.21, z: -0.50 },
+    { name: 'Physics', icon: '⚡', color: '#a855f7', bg: '#3b0764', x: -0.105, z: -0.52 },
+    { name: 'Space', icon: '🚀', color: '#f59e0b', bg: '#451a03', x: 0.0, z: -0.53 },
+    { name: 'History', icon: '🏛️', color: '#ec4899', bg: '#500724', x: 0.105, z: -0.52 },
+    { name: 'Python', icon: '🐍', color: '#10b981', bg: '#022c22', x: 0.21, z: -0.50 },
+  ];
+
+  const topicRot = new Euler(-0.12, 0, 0);
+  topics.forEach((t) => {
+    const chip = create3DButton(
+      world,
+      `topic-${t.name.toLowerCase()}`,
+      0.096,
+      0.036,
+      `${t.icon} ${t.name}`,
+      new Vector3(t.x, 1.54, t.z),
+      topicRot,
+      t.bg,
+      t.color,
+      () => selectTopic(t.name)
+    );
+    topicControls.push(chip);
+  });
+}
+
+/** Select a study topic, fetch cards via backend /cards, with fallback */
+export async function selectTopic(topicName: string): Promise<void> {
+  if (studyBuddyState.isLoadingCards) return;
+
+  voice.unlockAudio();
+  studyBuddyState.isLoadingCards = true;
+  studyBuddyState.loadingTopicName = topicName;
+  studyBuddyState.backendNotice = null;
+  renderTeacherScreen();
+
+  try {
+    const result = await fetchTopicCards(topicName, 5);
+    studyBuddyState.currentTopic = topicName;
+    studyBuddyState.isLoadingCards = false;
+    studyBuddyState.backendNotice = result.notice || null;
+
+    // Dynamically replace the 5 cards with new category data & textures
+    replaceFlashcards(result.cards);
+
+    renderTeacherScreen();
+    voice.speak(`Loaded 5 new ${topicName} flashcards. Bring a card to begin.`);
+  } catch (err: any) {
+    studyBuddyState.isLoadingCards = false;
+    studyBuddyState.backendNotice = 'Backend timeout - Kept existing cards';
+    renderTeacherScreen();
+  }
+
+  updateHtmlCounters();
 }
 
 /** Create Know (Green) and Revise (Orange) zones */
@@ -848,7 +966,8 @@ export function createZones(world: World): void {
 
 /** Called when a card enters the teacher trigger zone */
 export function onCardTrigger(card: FlashcardData): void {
-  // If card changed or first time entering
+  if (studyBuddyState.isLoadingCards) return;
+
   if (studyBuddyState.activeQuestionCard?.id !== card.id) {
     studyBuddyState.activeQuestionCard = card;
     studyBuddyState.stage = 'QUESTION';
@@ -875,38 +994,52 @@ export function canDropIntoZone(): boolean {
   return studyBuddyState.canDrop;
 }
 
-/** Handle voice or fallback answer */
-export function handleVoiceAnswer(type: 'known' | 'unsure', transcript?: string): void {
+/** Handle voice answer or fallback button, calls backend /evaluate */
+export async function handleVoiceAnswer(type: 'known' | 'unsure', transcript?: string): Promise<void> {
   if (!studyBuddyState.activeQuestionCard) return;
 
   voice.stopListening();
   voice.unlockAudio();
 
   const card = studyBuddyState.activeQuestionCard;
-  studyBuddyState.stage = 'FEEDBACK';
-  studyBuddyState.feedbackType = type;
-  studyBuddyState.canDrop = true; // Unlock zone drop!
-  studyBuddyState.suggestRevise = type === 'unsure';
+  const userAnswer = transcript || (type === 'known' ? 'I knew it' : 'I am not sure');
 
-  let responseSpeech = '';
-  if (type === 'known') {
-    responseSpeech = `Spot on! The answer is: ${card.answer}. You can now sort your card.`;
-    studyBuddyState.feedbackText = `Great recall! ${card.answer}`;
-  } else {
-    responseSpeech = `That's okay! ${card.answer}. Recommended: drop in revise.`;
-    studyBuddyState.feedbackText = `Review concept: ${card.answer}`;
-  }
-
-  // Update Revise tray suggestion visual
-  if (reviseZoneCtx && reviseZoneTexture && reviseBadgeTexture) {
-    renderZoneSurface(reviseZoneCtx, reviseZoneTexture, 'revise', studyBuddyState.reviseCount, type === 'unsure');
-    renderBadge(reviseBadgeTexture, 'revise', studyBuddyState.reviseCount, type === 'unsure');
-  }
-
+  // Transition to evaluating state with loading UI
+  studyBuddyState.stage = 'EVALUATING';
+  studyBuddyState.liveTranscript = userAnswer;
   renderTeacherScreen();
-  voice.speak(responseSpeech);
 
-  // Update HTML status
+  try {
+    const result = await evaluateAnswer(card.question, card.answer, userAnswer);
+    const isCorrect = result.verdict === 'correct';
+
+    studyBuddyState.stage = 'FEEDBACK';
+    studyBuddyState.feedbackType = isCorrect ? 'known' : 'unsure';
+    studyBuddyState.feedbackText = result.feedback;
+    studyBuddyState.canDrop = true; // Unlock zone drop!
+    studyBuddyState.suggestRevise = !isCorrect; // Highlight Revise for partial or wrong!
+
+    // Update Revise tray suggestion visual
+    if (reviseZoneCtx && reviseZoneTexture && reviseBadgeTexture) {
+      renderZoneSurface(reviseZoneCtx, reviseZoneTexture, 'revise', studyBuddyState.reviseCount, !isCorrect);
+      renderBadge(reviseBadgeTexture, 'revise', studyBuddyState.reviseCount, !isCorrect);
+    }
+
+    renderTeacherScreen();
+    voice.speak(result.feedback);
+  } catch (err: any) {
+    // Ultimate local safety fallback
+    const isKnown = type === 'known';
+    studyBuddyState.stage = 'FEEDBACK';
+    studyBuddyState.feedbackType = isKnown ? 'known' : 'unsure';
+    studyBuddyState.feedbackText = `${card.answer}`;
+    studyBuddyState.canDrop = true;
+    studyBuddyState.suggestRevise = !isKnown;
+
+    renderTeacherScreen();
+    voice.speak(isKnown ? `Correct! ${card.answer}` : `Here is the concept: ${card.answer}`);
+  }
+
   updateHtmlCounters();
 }
 
@@ -945,7 +1078,6 @@ export function toggleMic(): void {
           renderButtonTexture(micControl.texture, '🎙 Speak', '#0c4a6e', '#0284c7');
         }
 
-        // Analyze user answer
         const lower = text.toLowerCase();
         const unsurePhrases = ['not sure', 'dont know', "don't know", 'no idea', 'idk', 'unsure', 'forgot', 'no'];
         const isUnsure = unsurePhrases.some((phrase) => lower.includes(phrase));
@@ -1081,7 +1213,7 @@ function updateHtmlCounters(): void {
   const el = document.getElementById('hud-counters');
   if (el) {
     const isMuted = voice.isMuted();
-    el.innerHTML = `Know: <strong style="color: #4ade80;">${studyBuddyState.knowCount}</strong> | Revise: <strong style="color: #fb923c;">${studyBuddyState.reviseCount}</strong> | Voice: <strong style="color: ${isMuted ? '#f87171' : '#38bdf8'};">${isMuted ? 'Muted' : 'Active'}</strong>`;
+    el.innerHTML = `Topic: <strong style="color: #38bdf8;">${studyBuddyState.currentTopic}</strong> | Know: <strong style="color: #4ade80;">${studyBuddyState.knowCount}</strong> | Revise: <strong style="color: #fb923c;">${studyBuddyState.reviseCount}</strong> | Voice: <strong style="color: ${isMuted ? '#f87171' : '#38bdf8'};">${isMuted ? 'Muted' : 'Active'}</strong>`;
   }
 }
 
@@ -1101,6 +1233,7 @@ export function resetStudyBuddy(cards: CardRecord[]): void {
   studyBuddyState.feedbackType = null;
   studyBuddyState.suggestRevise = false;
   studyBuddyState.canDrop = false;
+  studyBuddyState.backendNotice = null;
 
   cards.forEach((card) => {
     card.lockedZone = null;
@@ -1176,9 +1309,9 @@ export function updateStudyBuddy(
     reviseRimMat.emissiveIntensity = 0.4;
   }
 
-  // 3. Process 3D Button Clicks and Hover glows
-  const controls = [notSureControl, micControl, knewItControl, muteControl];
-  for (const ctrl of controls) {
+  // 3. Process 3D Button Clicks and Hover glows (Controls + Topic Chips)
+  const allControls = [notSureControl, micControl, knewItControl, muteControl, ...topicControls];
+  for (const ctrl of allControls) {
     if (!ctrl) continue;
 
     const isPressed = ctrl.entity.hasComponent(Pressed);

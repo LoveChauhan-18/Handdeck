@@ -238,3 +238,4 @@ class WebVoiceProvider implements VoiceProvider {
 
 /** Active voice provider instance */
 export const voice: VoiceProvider = new WebVoiceProvider();
+

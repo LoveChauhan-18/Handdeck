@@ -76,19 +76,24 @@
   </head>
   <body>
     <div id="hud-instructions">
-      <span class="badge">Meta VR Competition 2026 • Milestone 3</span>
-      <h1>HandDeck: Voice Study Buddy</h1>
+      <span class="badge">Meta VR Competition 2026 • Milestone 4</span>
+      <h1>HandDeck: AI Study Buddy</h1>
       <div id="hud-counters" style="margin: 8px 0; padding: 6px 12px; background: rgba(0,0,0,0.45); border: 1px solid rgba(255,255,255,0.1); border-radius: 8px; font-size: 13px; font-weight: 500;">
-        Know: <strong style="color: #4ade80;">0</strong> | Revise: <strong style="color: #fb923c;">0</strong> | Voice: <strong style="color: #38bdf8;">Active</strong>
+        Topic: <strong style="color: #38bdf8;">Biology</strong> | Know: <strong style="color: #4ade80;">0</strong> | Revise: <strong style="color: #fb923c;">0</strong> | Voice: <strong style="color: #38bdf8;">Active</strong>
       </div>
       <p style="font-size: 12px; margin-bottom: 6px;">
-        Hands-only WebXR flashcards with Teacher Voice &amp; Speech Recognition (&lt;60 cm reach).
+        FastAPI AI backend connected. Click/pinch topic chips to generate cards with LLM:
       </p>
+      <div style="display: flex; flex-wrap: wrap; gap: 5px; margin-bottom: 10px;">
+        <button id="btn-topic-bio" style="background: #0c4a6e; color: #38bdf8; border: 1px solid #38bdf8; border-radius: 6px; padding: 4px 8px; font-size: 11px; font-weight: 600; cursor: pointer;">🧬 Biology</button>
+        <button id="btn-topic-phys" style="background: #3b0764; color: #c084fc; border: 1px solid #a855f7; border-radius: 6px; padding: 4px 8px; font-size: 11px; font-weight: 600; cursor: pointer;">⚡ Physics</button>
+        <button id="btn-topic-space" style="background: #451a03; color: #fbbf24; border: 1px solid #f59e0b; border-radius: 6px; padding: 4px 8px; font-size: 11px; font-weight: 600; cursor: pointer;">🚀 Space</button>
+        <button id="btn-topic-hist" style="background: #500724; color: #f472b6; border: 1px solid #ec4899; border-radius: 6px; padding: 4px 8px; font-size: 11px; font-weight: 600; cursor: pointer;">🏛️ History</button>
+        <button id="btn-topic-py" style="background: #022c22; color: #34d399; border: 1px solid #10b981; border-radius: 6px; padding: 4px 8px; font-size: 11px; font-weight: 600; cursor: pointer;">🐍 Python</button>
+      </div>
       <ul>
-        <li><strong>1. Question Aloud:</strong> Bring card to Teacher avatar to hear the question spoken.</li>
-        <li><strong>2. Answer:</strong> Click <strong>🎙 Mic</strong> (or Space/V) to speak answer, OR click fallback buttons <strong>✓ I knew it</strong> (1) / <strong>❓ Not sure</strong> (2).</li>
-        <li><strong>3. Feedback &amp; Sort:</strong> Teacher speaks feedback &amp; answer. Only then does the card unlock for dropping into <strong>KNOW</strong> or <strong>REVISE</strong>!</li>
-        <li><strong>4. Recommendation:</strong> "Not sure" highlights Revise tray as a helpful suggestion.</li>
+        <li><strong>AI Generation:</strong> POST /cards generates 5 questions with 6s timeout fallback.</li>
+        <li><strong>AI Grading:</strong> POST /evaluate analyzes your spoken answer. Correct $\rightarrow$ Know, partial/wrong $\rightarrow$ suggests Revise.</li>
       </ul>
       <div style="display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px;">
         <button id="btn-mic" style="background: #0284c7; color: white; border: none; border-radius: 6px; padding: 6px 10px; font-size: 12px; font-weight: 600; cursor: pointer;">🎙 Mic (Space)</button>

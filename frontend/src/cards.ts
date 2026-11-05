@@ -1,6 +1,6 @@
 /**
  * HandDeck - Seated WebXR Flashcards
- * Milestone 1, 2 & 3: 5 Interactive Grabbable Flashcards with Voice & Zone Sorting
+ * Milestone 1, 2, 3 & 4: 5 Interactive Grabbable Flashcards with Topic Swapping & AI Backend
  */
 
 import {
@@ -111,7 +111,7 @@ export const Flashcard = createComponent(
 
 /**
  * Runtime record for a flashcard — holds its mesh, materials, initial
- * transform, card data, and Milestone 2+3 snap/lock state.
+ * transform, card data, and Milestone 2-4 snap/lock state.
  */
 export interface CardRecord {
   entity: Entity;
@@ -132,7 +132,7 @@ export interface CardRecord {
 /** Module-level registry – populated by setupFlashcards() */
 const cardRecords: CardRecord[] = [];
 
-/** Expose records to other modules (study-buddy, panel) */
+/** Expose records to other modules (study-buddy, panel, api) */
 export function getCardRecords(): CardRecord[] {
   return cardRecords;
 }
@@ -188,7 +188,7 @@ function roundRect(
 }
 
 /** Generate a sharp high-res CanvasTexture for the front of a flashcard */
-function createCardFrontTexture(card: FlashcardData): CanvasTexture {
+export function createCardFrontTexture(card: FlashcardData): CanvasTexture {
   const canvas = document.createElement('canvas');
   canvas.width = 1024;
   canvas.height = 1400;
@@ -450,7 +450,7 @@ export function setupFlashcards(world: World): void {
       rotate: true,
     });
 
-    // Push full record including Milestone 2 snap/lock fields
+    // Push full record including Milestone 2-4 snap/lock fields
     cardRecords.push({
       entity,
       mesh,
@@ -469,6 +469,45 @@ export function setupFlashcards(world: World): void {
   });
 }
 
+/** Dynamically replaces the 5 cards with freshly generated topic cards from backend / local fallback */
+export function replaceFlashcards(newCards: FlashcardData[]): void {
+  newCards.slice(0, 5).forEach((cardData, i) => {
+    if (i < cardRecords.length) {
+      const record = cardRecords[i];
+      record.data = cardData;
+      record.baseColor.set(cardData.accentColor);
+
+      // Create and assign new sharp front texture
+      const newTexture = createCardFrontTexture(cardData);
+      record.frontMaterial.map = newTexture;
+      record.frontMaterial.needsUpdate = true;
+
+      // Reset transform & state
+      record.mesh.position.copy(record.initialPos);
+      record.mesh.rotation.copy(record.initialRot);
+      record.mesh.scale.set(1, 1, 1);
+      record.frontMaterial.emissiveIntensity = 0;
+      record.lockedZone = null;
+      record.isSnapping = false;
+      record.hasBeenMoved = false;
+
+      // Ensure ray interaction and grabbing are enabled
+      if (!record.entity.hasComponent(RayInteractable)) {
+        record.entity.addComponent(RayInteractable);
+      }
+      if (!record.entity.hasComponent(DistanceGrabbable)) {
+        record.entity.addComponent(DistanceGrabbable, {
+          movementMode: MovementMode.MoveFromTarget,
+          translate: true,
+          rotate: true,
+        });
+      }
+    }
+  });
+
+  resetStudyBuddy(cardRecords);
+}
+
 /** Resets all flashcards back to their default seated arc configuration */
 export function resetFlashcards(): void {
   resetStudyBuddy(cardRecords);
@@ -478,7 +517,7 @@ const tempPos = new Vector3();
 
 /**
  * ECS System managing interactive hover/grab visual feedback AND
- * Milestone 2+3 zone-detection + snap animation for flashcards.
+ * Milestone 2-4 zone-detection + snap animation for flashcards.
  */
 export class FlashcardSystem extends createSystem({
   cards: { required: [Flashcard] },
@@ -520,7 +559,7 @@ export class FlashcardSystem extends createSystem({
       }
     });
 
-    // ---- 2. Delegate Teacher animations, voice, and trigger detection ---------
+    // ---- 2. Delegate Teacher animations, voice, topics, and trigger detection --
     updateStudyBuddy(delta, time, cardRecords);
 
     // ---- 3. Zone detection: check released unlocked cards --------------------
