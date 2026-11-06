@@ -36,3 +36,4 @@ services:
         sync: false             # "sync: false" means "user must supply this"
       - key: ALLOWED_ORIGINS
         sync: false             # e.g. https://lovechauhan-18.github.io
+

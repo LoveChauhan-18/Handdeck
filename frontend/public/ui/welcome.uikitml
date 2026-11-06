@@ -63,10 +63,10 @@
 </style>
 <Panel class="panel-root">
   <div class="panel-content">
-    <div class="eyebrow">VR START COMPETITION 2026 | MILESTONE 4</div>
-    <div class="heading">HandDeck: AI Study Buddy</div>
-    <div class="body">Pinch any Topic chip (Biology, Physics, Space, History, Python) to generate cards.</div>
-    <div class="body">Bring a card to the Teacher, speak your answer, and receive AI grading!</div>
+    <div class="eyebrow">VR START COMPETITION 2026 | MILESTONE 5</div>
+    <div class="heading">HandDeck: Hand-Interaction Polish</div>
+    <div class="body">100% hands-only seated VR: 3D topic chips, mic, mute, reset, hint, and grading buttons.</div>
+    <div class="body">Forgiving snap-assist trays, hover glows, spatial audio cues, and session summary.</div>
   </div>
   <div class="button-group">
     <Button id="xr-button" class="button">

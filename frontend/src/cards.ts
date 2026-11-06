@@ -30,12 +30,17 @@ import {
 import {
   isInsideKnowZone,
   isInsideReviseZone,
+  isNearKnowZone,
+  isNearReviseZone,
+  KNOW_ZONE_POS,
+  REVISE_ZONE_POS,
   canDropIntoZone,
   snapCardToZone,
   updateStudyBuddy,
   resetStudyBuddy,
 } from './study-buddy.js';
 import { voice } from './voice.js';
+import { sfx } from './audio.js';
 
 export interface FlashcardData {
   id: number;
@@ -124,6 +129,7 @@ export interface CardRecord {
   lockedZone: 'know' | 'revise' | null;
   isSnapping: boolean;
   hasBeenMoved: boolean;
+  wasGrabbed: boolean;
   snapTargetPos: Vector3;
   snapTargetRot: Euler;
   snapProgress: number;
@@ -366,9 +372,9 @@ function createCardBackTexture(): CanvasTexture {
 export function setupFlashcards(world: World): void {
   cardRecords.length = 0;
 
-  const cardWidth = 0.14; // 14 cm
-  const cardHeight = 0.19; // 19 cm
-  const cardDepth = 0.006; // 6 mm
+  const cardWidth = 0.145; // 14.5 cm
+  const cardHeight = 0.195; // 19.5 cm
+  const cardDepth = 0.016; // 1.6 cm (thick for forgiving grab & ray hit)
   const arcRadius = 0.48; // 48 cm from user (strictly < 60 cm)
   const cardElevation = 1.15; // 1.15 m above floor
 
@@ -462,6 +468,7 @@ export function setupFlashcards(world: World): void {
       lockedZone: null,
       isSnapping: false,
       hasBeenMoved: false,
+      wasGrabbed: false,
       snapTargetPos: new Vector3(),
       snapTargetRot: new Euler(),
       snapProgress: 0,
@@ -490,6 +497,7 @@ export function replaceFlashcards(newCards: FlashcardData[]): void {
       record.lockedZone = null;
       record.isSnapping = false;
       record.hasBeenMoved = false;
+      record.wasGrabbed = false;
 
       // Ensure ray interaction and grabbing are enabled
       if (!record.entity.hasComponent(RayInteractable)) {
@@ -535,7 +543,13 @@ export class FlashcardSystem extends createSystem({
         record.hasBeenMoved = true;
         // Unlock audio on first user pinch / grab
         voice.unlockAudio();
+        sfx.unlock();
+
+        if (!record.wasGrabbed) {
+          sfx.playGrab();
+        }
       }
+      record.wasGrabbed = isGrabbed;
 
       if (record.lockedZone) {
         // Locked cards keep their placement glow
@@ -543,15 +557,17 @@ export class FlashcardSystem extends createSystem({
       }
 
       if (isGrabbed) {
-        // Bright grab highlight & slight scale up
+        // Bright grab highlight with subtle tactile pulse
+        const pulse = 0.48 + Math.sin(time * 7) * 0.12;
         record.frontMaterial.emissive.copy(record.baseColor);
-        record.frontMaterial.emissiveIntensity = 0.45;
-        record.mesh.scale.set(1.05, 1.05, 1.05);
+        record.frontMaterial.emissiveIntensity = pulse;
+        record.mesh.scale.set(1.06, 1.06, 1.06);
       } else if (isHovered) {
-        // Subtle hover glow
+        // Smooth hover glow pulse
+        const hoverPulse = 0.24 + Math.sin(time * 4) * 0.08;
         record.frontMaterial.emissive.copy(record.baseColor);
-        record.frontMaterial.emissiveIntensity = 0.22;
-        record.mesh.scale.set(1.02, 1.02, 1.02);
+        record.frontMaterial.emissiveIntensity = hoverPulse;
+        record.mesh.scale.set(1.03, 1.03, 1.03);
       } else {
         // Normal resting state
         record.frontMaterial.emissiveIntensity = 0.0;
@@ -562,7 +578,7 @@ export class FlashcardSystem extends createSystem({
     // ---- 2. Delegate Teacher animations, voice, topics, and trigger detection --
     updateStudyBuddy(delta, time, cardRecords);
 
-    // ---- 3. Zone detection: check released unlocked cards --------------------
+    // ---- 3. Zone detection & Snap-Assist: check released unlocked cards -------
     for (const card of cardRecords) {
       if (card.lockedZone || card.isSnapping) continue;
       // Skip while actively held
@@ -571,13 +587,21 @@ export class FlashcardSystem extends createSystem({
       if (!card.hasBeenMoved) continue;
 
       card.mesh.getWorldPosition(tempPos);
-      if (isInsideKnowZone(tempPos)) {
-        if (canDropIntoZone()) {
+      const inKnow = isInsideKnowZone(tempPos);
+      const inRevise = isInsideReviseZone(tempPos);
+      const nearKnow = isNearKnowZone(tempPos);
+      const nearRevise = isNearReviseZone(tempPos);
+
+      if (canDropIntoZone()) {
+        if (inKnow) {
           snapCardToZone(card, 'know');
-        }
-      } else if (isInsideReviseZone(tempPos)) {
-        if (canDropIntoZone()) {
+        } else if (inRevise) {
           snapCardToZone(card, 'revise');
+        } else if (nearKnow || nearRevise) {
+          // Snap-assist: snap toward the nearer tray if released within 35 cm tolerance
+          const distKnow = tempPos.distanceTo(KNOW_ZONE_POS);
+          const distRevise = tempPos.distanceTo(REVISE_ZONE_POS);
+          snapCardToZone(card, distKnow <= distRevise ? 'know' : 'revise');
         }
       }
     }

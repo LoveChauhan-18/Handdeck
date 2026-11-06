@@ -76,13 +76,13 @@
   </head>
   <body>
     <div id="hud-instructions">
-      <span class="badge">Meta VR Competition 2026 • Milestone 4</span>
-      <h1>HandDeck: AI Study Buddy</h1>
+      <span class="badge">Meta VR Competition 2026 • Milestone 5</span>
+      <h1>HandDeck: VR Study Buddy</h1>
       <div id="hud-counters" style="margin: 8px 0; padding: 6px 12px; background: rgba(0,0,0,0.45); border: 1px solid rgba(255,255,255,0.1); border-radius: 8px; font-size: 13px; font-weight: 500;">
         Topic: <strong style="color: #38bdf8;">Biology</strong> | Know: <strong style="color: #4ade80;">0</strong> | Revise: <strong style="color: #fb923c;">0</strong> | Voice: <strong style="color: #38bdf8;">Active</strong>
       </div>
       <p style="font-size: 12px; margin-bottom: 6px;">
-        FastAPI AI backend connected. Click/pinch topic chips to generate cards with LLM:
+        100% hands-only 3D controls inside seated reach:
       </p>
       <div style="display: flex; flex-wrap: wrap; gap: 5px; margin-bottom: 10px;">
         <button id="btn-topic-bio" style="background: #0c4a6e; color: #38bdf8; border: 1px solid #38bdf8; border-radius: 6px; padding: 4px 8px; font-size: 11px; font-weight: 600; cursor: pointer;">🧬 Biology</button>
@@ -92,13 +92,16 @@
         <button id="btn-topic-py" style="background: #022c22; color: #34d399; border: 1px solid #10b981; border-radius: 6px; padding: 4px 8px; font-size: 11px; font-weight: 600; cursor: pointer;">🐍 Python</button>
       </div>
       <ul>
-        <li><strong>AI Generation:</strong> POST /cards generates 5 questions with 6s timeout fallback.</li>
-        <li><strong>AI Grading:</strong> POST /evaluate analyzes your spoken answer. Correct $\rightarrow$ Know, partial/wrong $\rightarrow$ suggests Revise.</li>
+        <li><strong>Hands-Only:</strong> 3D Topic chips, Mic, Mute, Reset, Hint, and Fallback buttons all pinch-able in seated VR.</li>
+        <li><strong>Palm-Up / Hint:</strong> Turn palm up or click [💡 Hint] to ask teacher for a hint.</li>
+        <li><strong>Snap-Assist:</strong> Forgiving grab targets and auto-snap toward nearest tray when released close.</li>
+        <li><strong>Onboarding & Summary:</strong> 15s in-VR intro and end-of-session mastery summary.</li>
       </ul>
       <div style="display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px;">
         <button id="btn-mic" style="background: #0284c7; color: white; border: none; border-radius: 6px; padding: 6px 10px; font-size: 12px; font-weight: 600; cursor: pointer;">🎙 Mic (Space)</button>
         <button id="btn-knew" style="background: #16a34a; color: white; border: none; border-radius: 6px; padding: 6px 10px; font-size: 12px; font-weight: 600; cursor: pointer;">✓ I knew it (1)</button>
         <button id="btn-not-sure" style="background: #ea580c; color: white; border: none; border-radius: 6px; padding: 6px 10px; font-size: 12px; font-weight: 600; cursor: pointer;">❓ Not sure (2)</button>
+        <button id="btn-hint" style="background: #b45309; color: white; border: none; border-radius: 6px; padding: 6px 10px; font-size: 12px; font-weight: 600; cursor: pointer;">💡 Hint (H)</button>
         <button id="btn-mute" style="background: #334155; color: white; border: none; border-radius: 6px; padding: 6px 10px; font-size: 12px; font-weight: 600; cursor: pointer;">🔊 Mute (M)</button>
         <button id="btn-reset" style="background: #475569; color: white; border: none; border-radius: 6px; padding: 6px 10px; font-size: 12px; font-weight: 600; cursor: pointer;">↺ Reset (R)</button>
       </div>

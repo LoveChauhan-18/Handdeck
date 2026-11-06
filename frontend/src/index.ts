@@ -10,11 +10,13 @@ import {
   createTeacher,
   createZones,
   handleVoiceAnswer,
+  requestHint,
   selectTopic,
   toggleMic,
   toggleMute,
 } from './study-buddy.js';
 import { voice } from './voice.js';
+import { sfx } from './audio.js';
 
 World.create(
   document.getElementById('scene-container') as HTMLDivElement,
@@ -28,9 +30,10 @@ World.create(
   createTeacher(world);
   createZones(world);
 
-  // Unlock browser audio autoplay on first user interaction
+  // Unlock browser audio autoplay & Web Audio synthesizer on first user interaction
   const unlock = () => {
     voice.unlockAudio();
+    sfx.unlock();
   };
   window.addEventListener('pointerdown', unlock, { once: true });
   window.addEventListener('click', unlock, { once: true });
@@ -51,6 +54,9 @@ World.create(
   });
   document.getElementById('btn-not-sure')?.addEventListener('click', () => {
     handleVoiceAnswer('unsure');
+  });
+  document.getElementById('btn-hint')?.addEventListener('click', () => {
+    requestHint();
   });
 
   // Topic Buttons in HUD
@@ -81,6 +87,8 @@ World.create(
       toggleMute();
     } else if (e.key === 'v' || e.key === 'V' || e.code === 'Space') {
       toggleMic();
+    } else if (e.key === 'h' || e.key === 'H') {
+      requestHint();
     } else if (e.key === '1') {
       handleVoiceAnswer('known');
     } else if (e.key === '2') {

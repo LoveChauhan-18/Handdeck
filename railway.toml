@@ -27,3 +27,4 @@ restartPolicyMaxRetries = 3
 RATE_LIMIT_PER_MINUTE = "60"
 MAX_REQUEST_BYTES = "1048576"
 # GEMINI_API_KEY and ALLOWED_ORIGINS must be added as SECRET variables in the dashboard.
+
